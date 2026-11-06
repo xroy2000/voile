@@ -15,6 +15,15 @@ Aucun asset, code ou polaire de Virtual Regatta n'est inclus ; rien ne s'injecte
 - **Route idéale** ★ : route du routeur affichée en jaune, recalculée automatiquement quand les points changent
   (tronçon par point, puis arrivée) ; « Suivre la route idéale » engage le pilote dessus.
 
+## Sauvegarde de la partie
+Sauvegarde automatique toutes les 5 s dans le navigateur (case « Partie »), reprise au rechargement : position, cap, vitesse, temps de jeu,
+adversaires, pilote (cap / TWA / VMG / point / route), route idéale, points de routage, route GPX et vitesse du temps.
+**Exporter** télécharge un `.json`, **Charger** le reprend (autre navigateur ou ordinateur), **Nouvelle partie** efface la sauvegarde.
+
+## Mon bateau
+Section « Mon bateau » : monocoque IMOCA à foils, trimaran, catamaran ou voilier classique ; couleurs de coque, d'accent et de voile ; taille ;
+voiles affichées ou non. L'icône est utilisée sur la carte et au centre du compas, et sa grand-voile suit le TWA. Réglages mémorisés.
+
 ## Importer ma position (GPX)
 Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau est placé là, le jeu en pause,
 le cap du fichier repris s'il existe, et la route du fichier est tracée en pointillés bleus (« Route GPX »).

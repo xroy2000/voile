@@ -100,12 +100,13 @@
     <canvas id="map"></canvas>
     <div id="mapTools">
       <button id="tgWind" class="on" title="Vent">💨</button>
-      <button id="tgIso" class="on" title="Isochrones">◌</button>
+      <button id="tgIso" class="on" title="Isochrones : positions atteignables à heure égale, une ligne toutes les 6 h">◌</button>
       <button id="tgRoute" class="on" title="Route idéale">★</button>
       <button id="btnAddWp" title="Ajouter un point de routage (puis clic sur la carte)">📍</button>
       <button id="tgFollow" title="Centrer sur le bateau">◎</button>
       <button id="btnFit" title="Tout voir">⤢</button>
     </div>
+    <div id="isoLegend" class="hidden"><span style="color:#fff">◌ Isochrones</span> : les lignes blanches en éventail sont les positions que le bateau peut atteindre à heure égale (une ligne toutes les 6 h) ; la route jaune en suit le bord extérieur.</div>
     <div id="legend"></div>
     <div id="hover">—</div>
     <div id="mapMsg" class="hidden"></div>
@@ -113,6 +114,17 @@
   </div>
 
   <aside id="right">
+    <section>
+      <h3>Partie</h3>
+      <div class="row wrap">
+        <button id="btnSave" title="Enregistre maintenant dans ce navigateur">💾 Sauvegarder</button>
+        <button id="btnSaveFile" title="Télécharge un fichier .json (bateau, pilote, route, points, GPX)">⤓ Exporter</button>
+        <label class="file" title="Reprend une partie exportée">⤒ Charger<input id="fileSave" type="file" accept=".json,application/json"></label>
+        <button id="btnNew" title="Efface la sauvegarde et repart au départ">Nouvelle partie</button>
+      </div>
+      <label class="check"><input id="chkSave" type="checkbox" checked> Sauvegarde automatique (toutes les 5 s) et reprise au rechargement</label>
+      <div id="saveInfo" class="muted small">—</div>
+    </section>
     <section>
       <h3>Points de routage</h3>
       <div class="row wrap">
@@ -140,6 +152,19 @@
       <div id="routeStatus" class="muted small">Aucune route calculée.</div>
       <div id="routeSummary" class="summary hidden"></div>
       <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section>
+      <h3>Mon bateau</h3>
+      <canvas id="boatPrev" width="256" height="256"></canvas>
+      <div class="boatTypes" id="boatTypes"></div>
+      <div class="row">
+        <div class="col"><label>Coque</label><input id="bHull" type="color"></div>
+        <div class="col"><label>Accent</label><input id="bAccent" type="color"></div>
+        <div class="col"><label>Voile</label><input id="bSail" type="color"></div>
+      </div>
+      <div class="row"><label>Taille</label><input id="bSize" type="range" min="0.6" max="2.4" step="0.1"></div>
+      <label class="check"><input id="bShowSail" type="checkbox"> Afficher les voiles sur la carte</label>
+      <div class="row wrap"><button id="bReset">Par défaut</button></div>
     </section>
     <section>
       <h3>Classement</h3>

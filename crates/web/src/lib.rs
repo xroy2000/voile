@@ -6,7 +6,7 @@ use regatta_core::polar::Polar;
 use regatta_core::router::{route, RouteConfig, RouteResult};
 use regatta_core::wind::{GridWind, SyntheticWind, WindField};
 use regatta_core::LatLon;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 /// Zone rasterisée pour la terre : Atlantique Nord élargi.
@@ -34,6 +34,50 @@ struct RouteOut<'a> {
     tacks: u32,
     gybes: u32,
     dt_s: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BoatSave {
+    lat: f64,
+    lon: f64,
+    heading: f64,
+    speed: f64,
+    twa: f64,
+    tws: f64,
+    twd: f64,
+    dist_sailed_nm: f64,
+    maneuvers: u32,
+    since_maneuver_s: f64,
+    tack_side: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GameSave {
+    now: f64,
+    finished_at: Option<f64>,
+    grounded: bool,
+    player: BoatSave,
+    ai: Vec<(BoatSave, Option<f64>)>,
+    track: Vec<(f32, f32)>,
+}
+
+impl BoatSave {
+    fn of(b: &regatta_core::boat::Boat) -> Self {
+        BoatSave { lat: b.pos.lat, lon: b.pos.lon, heading: b.heading, speed: b.speed, twa: b.twa, tws: b.tws, twd: b.twd, dist_sailed_nm: b.dist_sailed_nm, maneuvers: b.maneuvers, since_maneuver_s: b.since_maneuver_s.min(1e9), tack_side: b.tack_side }
+    }
+    fn apply(&self, b: &mut regatta_core::boat::Boat) {
+        b.pos = LatLon::new(self.lat, self.lon);
+        b.leg_start = b.pos;
+        b.heading = self.heading;
+        b.speed = self.speed;
+        b.twa = self.twa;
+        b.tws = self.tws;
+        b.twd = self.twd;
+        b.dist_sailed_nm = self.dist_sailed_nm;
+        b.maneuvers = self.maneuvers;
+        b.since_maneuver_s = self.since_maneuver_s;
+        b.tack_side = self.tack_side;
+    }
 }
 
 fn js_err(s: impl Into<String>) -> JsError {
@@ -216,6 +260,34 @@ impl Sim {
             Pilot::Waypoint(p) => vec![4.0, p.lat, p.lon],
             Pilot::Route(_) => vec![5.0, 0.0, 0.0],
         }
+    }
+
+    /// État de la partie (temps, bateau, adversaires, trace) en JSON, pour la sauvegarde.
+    /// Le pilote et la route sont sauvegardés côté JavaScript (`pilot_target`, route du routeur).
+    pub fn export_state(&self) -> String {
+        to_json(&GameSave {
+            now: self.game.now,
+            finished_at: self.game.finished_at,
+            grounded: self.game.grounded,
+            player: BoatSave::of(&self.game.player),
+            ai: self.game.ai.iter().map(|a| (BoatSave::of(&a.boat), a.finished_at)).collect(),
+            track: self.game.track.clone(),
+        })
+    }
+
+    /// Restaure un état produit par `export_state` sur la même partie (même parcours, même vent).
+    pub fn import_state(&mut self, json: &str) -> Result<(), JsError> {
+        let g: GameSave = serde_json::from_str(json).map_err(|e| js_err(format!("sauvegarde illisible : {e}")))?;
+        self.game.now = g.now;
+        self.game.finished_at = g.finished_at;
+        self.game.grounded = g.grounded;
+        g.player.apply(&mut self.game.player);
+        for (a, (bs, fin)) in self.game.ai.iter_mut().zip(g.ai.iter()) {
+            bs.apply(&mut a.boat);
+            a.finished_at = *fin;
+        }
+        self.game.track = g.track;
+        Ok(())
     }
 
     /// Mémorise une route (format `to_flat`) pour que le pilote puisse la suivre.

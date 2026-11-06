@@ -75,6 +75,102 @@ function segDistNm(a, b, p) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+// ------------------------------------------------------------------ icône du bateau (personnalisable)
+const BOAT_TYPES = { mono: 'Monocoque IMOCA', tri: 'Trimaran', cata: 'Catamaran', cruiser: 'Voilier classique' };
+const BOAT_DEFAULT = { type: 'mono', hull: '#f2f6fb', accent: '#4d8dff', sail: '#ffffff', size: 1.2, showSail: true };
+function loadBoat() {
+  try { return { ...BOAT_DEFAULT, ...JSON.parse(localStorage.getItem('voile.boat') || '{}') }; } catch { return { ...BOAT_DEFAULT }; }
+}
+function saveBoat() { try { localStorage.setItem('voile.boat', JSON.stringify(S.boat)); } catch { /* stockage indisponible */ } }
+
+/** Coque en vue de dessus : étrave en (x, y0), poupe en y1, largeur max w. */
+function hullPath(c, x, y0, y1, w) {
+  const len = y1 - y0;
+  c.beginPath(); c.moveTo(x, y0);
+  c.bezierCurveTo(x + w, y0 + len * 0.25, x + w * 0.95, y0 + len * 0.75, x + w * 0.6, y1);
+  c.lineTo(x - w * 0.6, y1);
+  c.bezierCurveTo(x - w * 0.95, y0 + len * 0.75, x - w, y0 + len * 0.25, x, y0);
+  c.closePath();
+}
+/** Dessine le bateau à l'origine du contexte, étrave vers le haut (le contexte est déjà tourné au cap).
+ *  L = demi-longueur en pixels ; twa règle l'ouverture de la grand-voile (sous le vent). */
+function drawBoatIcon(c, b, twa, L, withSail = true) {
+  const dark = '#0b1b2b';
+  c.save(); c.scale(L, L); c.lineJoin = 'round'; c.lineCap = 'round';
+  const lw = (px) => px / L; // épaisseur de trait en pixels écran
+  const hull = (x, y0, y1, w) => {
+    hullPath(c, x, y0, y1, w);
+    const g = c.createLinearGradient(x - w, 0, x + w, 0); g.addColorStop(0, shade(b.hull, -0.18)); g.addColorStop(0.5, b.hull); g.addColorStop(1, shade(b.hull, -0.12));
+    c.fillStyle = g; c.fill(); c.lineWidth = lw(Math.max(1.2, L * 0.07)); c.strokeStyle = dark; c.stroke();
+    hullPath(c, x, y0 + (y1 - y0) * 0.12, y1 - (y1 - y0) * 0.1, w * 0.28); c.fillStyle = b.accent; c.fill(); // liston de pont
+  };
+  const beam = (x0, x1, y) => { c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.lineWidth = lw(Math.max(1.5, L * 0.09)); c.strokeStyle = shade(b.hull, -0.35); c.stroke(); c.lineWidth = lw(Math.max(.8, L * 0.04)); c.strokeStyle = b.accent; c.stroke(); };
+  let mast = [0, -0.15], boom = 0.95;
+  switch (b.type) {
+    case 'tri':
+      beam(-0.62, 0.62, -0.18); beam(-0.62, 0.62, 0.3);
+      hull(-0.62, -0.5, 0.62, 0.075); hull(0.62, -0.5, 0.62, 0.075); hull(0, -1, 0.95, 0.13);
+      mast = [0, -0.22]; boom = 0.85; break;
+    case 'cata':
+      hull(-0.36, -0.95, 0.95, 0.1); hull(0.36, -0.95, 0.95, 0.1);
+      c.fillStyle = 'rgba(20,35,60,.78)'; c.fillRect(-0.36, -0.5, 0.72, 0.9); c.strokeStyle = dark; c.lineWidth = lw(1); c.strokeRect(-0.36, -0.5, 0.72, 0.9);
+      beam(-0.36, 0.36, -0.55); beam(-0.36, 0.36, 0.4);
+      mast = [0, -0.22]; boom = 0.85; break;
+    case 'cruiser':
+      hull(0, -0.92, 0.92, 0.3);
+      c.fillStyle = shade(b.hull, -0.25); c.beginPath(); c.roundRect(-0.15, -0.18, 0.3, 0.42, 0.06); c.fill(); c.lineWidth = lw(1); c.strokeStyle = dark; c.stroke();
+      c.fillStyle = b.accent; c.fillRect(-0.12, -0.12, 0.24, 0.07);
+      mast = [0, -0.3]; boom = 0.7; break;
+    default: // mono : IMOCA à foils
+      for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(sx * 0.2, 0.0); c.lineTo(sx * 0.62, 0.14); c.lineWidth = lw(Math.max(2, L * 0.1)); c.strokeStyle = shade(b.accent, -0.1); c.stroke(); }
+      hull(0, -1, 1, 0.24);
+      c.fillStyle = shade(b.hull, -0.3); c.beginPath(); c.roundRect(-0.09, 0.4, 0.18, 0.3, 0.05); c.fill(); // cockpit fermé
+  }
+  if (withSail) {
+    const side = twa >= 0 ? -1 : 1, sa = clamp(Math.abs(twa) * 0.5, 4, 88) * D2R, [mx, my] = mast, bl = boom;
+    const ex = mx + side * Math.sin(sa) * bl, ey = my + Math.cos(sa) * bl;
+    const cx1 = mx + side * (Math.sin(sa) * bl * 0.55 + 0.16), cy1 = my + Math.cos(sa) * bl * 0.5;
+    // foc
+    const ja = sa * 0.9, jx = mx + side * Math.sin(ja) * 0.55, jy = my + Math.cos(ja) * 0.4;
+    c.beginPath(); c.moveTo(0, -0.93); c.quadraticCurveTo(side * 0.2, my - 0.1, jx, jy); c.lineTo(mx, my); c.closePath();
+    c.fillStyle = rgba(b.sail, 0.5); c.fill();
+    // grand-voile
+    c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey); c.closePath();
+    c.fillStyle = rgba(b.sail, 0.55); c.fill();
+    c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey);
+    c.lineWidth = lw(Math.max(2, L * 0.1)); c.strokeStyle = b.sail; c.stroke();
+    c.beginPath(); c.arc(mx, my, lw(Math.max(2.5, L * 0.1)), 0, 7); c.fillStyle = dark; c.fill();
+  }
+  c.restore();
+}
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function rgba(h, a) { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; }
+function shade(h, f) { const [r, g, b] = hexRgb(h).map((v) => clamp(Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f), 0, 255)); return `rgb(${r},${g},${b})`; }
+
+function drawBoatPreview() {
+  const cv = $('#boatPrev'), c = cv.getContext('2d');
+  c.clearRect(0, 0, cv.width, cv.height);
+  const g = c.createRadialGradient(128, 128, 10, 128, 128, 130); g.addColorStop(0, '#0b2347'); g.addColorStop(1, '#03060d');
+  c.fillStyle = g; c.fillRect(0, 0, 256, 256);
+  c.save(); c.translate(128, 128); c.rotate(-10 * D2R); drawBoatIcon(c, S.boat, 105, 78 * Math.min(1, 0.55 + S.boat.size * 0.25), S.boat.showSail); c.restore();
+}
+function bindBoatUi() {
+  const bt = $('#boatTypes');
+  bt.innerHTML = Object.entries(BOAT_TYPES).map(([k, n]) => `<button data-t="${k}">${n}</button>`).join('');
+  const sync = () => {
+    bt.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === S.boat.type));
+    $('#bHull').value = S.boat.hull; $('#bAccent').value = S.boat.accent; $('#bSail').value = S.boat.sail;
+    $('#bSize').value = S.boat.size; $('#bShowSail').checked = S.boat.showSail;
+    drawBoatPreview();
+  };
+  bt.addEventListener('click', (e) => { const t = e.target.dataset?.t; if (t) { S.boat.type = t; saveBoat(); sync(); } });
+  for (const [id, key] of [['#bHull', 'hull'], ['#bAccent', 'accent'], ['#bSail', 'sail']]) $(id).oninput = (e) => { S.boat[key] = e.target.value; saveBoat(); drawBoatPreview(); };
+  $('#bSize').oninput = (e) => { S.boat.size = +e.target.value; saveBoat(); drawBoatPreview(); };
+  $('#bShowSail').onchange = (e) => { S.boat.showSail = e.target.checked; saveBoat(); drawBoatPreview(); };
+  $('#bReset').onclick = () => { S.boat = { ...BOAT_DEFAULT }; saveBoat(); sync(); };
+  sync();
+}
+
 // ------------------------------------------------------------------ état
 const S = {
   sim: null, worker: null, ready: false,
@@ -85,7 +181,7 @@ const S = {
   layers: { wind: true, iso: true, route: true },
   follow: false, armPoint: false, waypoint: null,
   wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
-  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null,
+  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null,
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
@@ -95,6 +191,85 @@ const SPEEDS = [[1, '×1'], [60, '×60'], [600, '×600'], [3600, '1 h/s'], [1440
 
 const canvas = $('#map');
 const ctx = canvas.getContext('2d');
+
+// ------------------------------------------------------------------ sauvegarde de la partie
+const SAVE_KEY = 'voile.save';
+function buildSave() {
+  const i = S.info;
+  return {
+    v: 1, savedAt: Date.now(), game: S.sim.export_state(),
+    course: { sLat: i.start.lat, sLon: i.start.lon, fLat: i.finish.lat, fLon: i.finish.lon, startUnix: i.start_unix },
+    windTmin: i.t_min, pilot: S.pilotT, scale: S.scale, running: S.running,
+    wps: S.wps, seq: S.seq, route: S.route ? { ...S.route, isochrones: [] } : null, gpxRoute: S.gpxRoute || null, cmMode: S.cmMode,
+  };
+}
+const hhmmss = (ms) => new Date(ms).toLocaleTimeString('fr-FR');
+function saveNow(auto) {
+  try {
+    const sv = buildSave();
+    localStorage.setItem(SAVE_KEY, JSON.stringify(sv));
+    $('#saveInfo').textContent = `${auto ? 'Sauvegarde auto' : 'Sauvegardé'} à ${hhmmss(sv.savedAt)} · jeu au ${fmtLocal(S.snap.now)}`;
+    return sv;
+  } catch (e) { $('#saveInfo').textContent = 'Sauvegarde impossible : ' + (e.message || e); return null; }
+}
+function readSave() {
+  try { const sv = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return sv && sv.v === 1 ? sv : null; } catch { return null; }
+}
+/** Reprend une partie : même parcours, état du bateau et des adversaires, pilote, route idéale, points de routage et route GPX. */
+function restoreGame(sv, label) {
+  setLoading('Restauration de la partie…');
+  S.routeBusy = false; $('#btnRoute').disabled = false; S.currentRouteId = -1;
+  createSim(sv.course);
+  S.sim.import_state(typeof sv.game === 'string' ? sv.game : JSON.stringify(sv.game));
+  S.info = JSON.parse(S.sim.info()); S.snap = JSON.parse(S.sim.snapshot());
+  S.route = sv.route || null; S.wps = sv.wps || []; S.seq = !!sv.seq; S.gpxRoute = sv.gpxRoute || null; S.cmMode = sv.cmMode || 'hdg';
+  const [k, a, b] = sv.pilot || [0, S.snap.heading, 0];
+  if (k === 0) S.sim.set_heading(a);
+  else if (k === 1) S.sim.set_twa(a);
+  else if (k === 2) S.sim.set_vmg(true);
+  else if (k === 3) S.sim.set_vmg(false);
+  else if (k === 4) S.sim.set_waypoint(a, b);
+  else if (k === 5) { if (!(S.route && S.sim.set_route_flat(flatRoute(S.route)) && S.sim.follow_route())) S.sim.set_waypoint_finish(); }
+  S.afterReady = () => { S.scale = sv.scale || 600; S.running = !!sv.running; syncSpeedBtns(); };
+  startWorker(sv.course);
+  renderRoute(); renderWpList();
+  let note = `${label || 'Partie restaurée'} (sauvegardée à ${hhmmss(sv.savedAt)}, jeu au ${fmtLocal(S.snap.now)}).`;
+  if (sv.windTmin && S.info.t_min && Math.abs(sv.windTmin - S.info.t_min) > 1) note += ' ⚠ Le vent chargé n’est pas celui de la sauvegarde.';
+  $('#saveInfo').textContent = note;
+  fitView();
+}
+function bindSaveUi() {
+  const pref = (() => { try { return localStorage.getItem('voile.autosave') !== '0'; } catch { return true; } })();
+  $('#chkSave').checked = pref;
+  $('#chkSave').onchange = (e) => { try { localStorage.setItem('voile.autosave', e.target.checked ? '1' : '0'); } catch { /* ignoré */ } };
+  $('#btnSave').onclick = () => saveNow(false);
+  $('#btnSaveFile').onclick = () => {
+    const sv = saveNow(false); if (!sv) return;
+    const d = new Date(sv.savedAt), z = (n) => String(n).padStart(2, '0');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(sv)], { type: 'application/json' }));
+    a.download = `voile-partie-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}.json`;
+    a.click();
+  };
+  $('#fileSave').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      const sv = JSON.parse(await f.text());
+      if (sv.v !== 1 || !sv.game || !sv.course) throw new Error('ce fichier n’est pas une sauvegarde Voile');
+      restoreGame(sv, `Partie chargée (${f.name})`);
+    } catch (err) { showDataErr('Chargement : ' + String(err.message || err)); }
+  };
+  $('#btnNew').onclick = () => {
+    if (!confirm('Effacer la sauvegarde et repartir au départ ?')) return;
+    try { localStorage.removeItem(SAVE_KEY); } catch { /* ignoré */ }
+    resetGame(null);
+    $('#saveInfo').textContent = 'Nouvelle partie.';
+  };
+  const auto = () => { if (S.ready && $('#chkSave').checked && S.sim) saveNow(true); };
+  setInterval(auto, 5000);
+  addEventListener('pagehide', auto);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') auto(); });
+}
 
 // ------------------------------------------------------------------ démarrage
 async function boot() {
@@ -107,10 +282,15 @@ async function boot() {
     S.data.land = await landResp.text();
     S.data.wind = windResp && windResp.ok ? new Uint8Array(await windResp.arrayBuffer()) : null;
     buildLandPath(JSON.parse(S.data.land));
+    S.boat = loadBoat();
     buildSpeedButtons();
     bindUi();
+    bindBoatUi();
     startWorker();
+    bindSaveUi();
     createSim(null);
+    const sv = readSave();
+    if (sv) { try { restoreGame(sv, 'Partie reprise'); } catch (e) { console.error(e); try { localStorage.removeItem(SAVE_KEY); } catch { /* ignoré */ } createSim(null); startWorker(); } }
     resize();
     fitView();
     setLoading(null);
@@ -145,14 +325,14 @@ function startWorker(course) {
   S.worker?.terminate();
   S.worker = new Worker('worker.js', { type: 'module' });
   S.worker.onmessage = onWorkerMsg;
-  S.worker.postMessage({ type: 'init', wind: S.data.wind, land: S.data.land, polar: S.data.polar, now: Date.now() / 1000, course });
+  S.worker.postMessage({ type: 'init', wind: S.data.wind, land: S.data.land, polar: S.data.polar, now: course?.startUnix ?? Date.now() / 1000, course });
 }
 
 function createSim(course) {
   try {
     S.sim?.free();
     S.sim = new Sim(S.data.wind ?? undefined, S.data.land ?? undefined, S.data.polar ?? undefined, Date.now() / 1000);
-    if (course) S.sim.reset(course.sLat, course.sLon, course.fLat, course.fLon, Date.now() / 1000);
+    if (course) S.sim.reset(course.sLat, course.sLon, course.fLat, course.fLon, course.startUnix ?? Date.now() / 1000);
   } catch (e) {
     showDataErr(String(e.message || e));
     S.data.polar = null; S.data.wind = null;
@@ -755,8 +935,8 @@ function draw() {
     if (S.view.z > 5000) { ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(b.name, x + 8, y + 3); }
   }
   const [px, py] = toScreen(sn.lat, sn.lon);
-  ctx.beginPath(); ctx.arc(px, py, 14, 0, 6.3); ctx.fillStyle = 'rgba(77,141,255,.22)'; ctx.fill();
-  boatShape(px, py, sn.heading, '#ffffff', 7, '#0b1b2b');
+  ctx.beginPath(); ctx.arc(px, py, 10 + 9 * S.boat.size, 0, 6.3); ctx.fillStyle = 'rgba(77,141,255,.22)'; ctx.fill();
+  ctx.save(); ctx.translate(px, py); ctx.rotate(sn.heading * D2R); drawBoatIcon(ctx, S.boat, sn.twa, 13 * S.boat.size, S.boat.showSail); ctx.restore();
   // vent vrai sur le bateau
   const wr = (sn.twd + 180) * D2R; ctx.strokeStyle = '#f6ad55'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.sin(wr) * 34, py - Math.cos(wr) * 34); ctx.stroke();
 
@@ -845,22 +1025,10 @@ function drawCompass(sn) {
   c.beginPath(); c.moveTo(0, -16); c.lineTo(-11, 6); c.lineTo(11, 6); c.closePath(); c.fillStyle = '#f6ad55'; c.fill(); c.restore();
   c.lineCap = 'butt';
 
-  // bateau + grand-voile (réglée sous le vent, ouverte selon le TWA)
-  c.save(); c.translate(cx, cy); c.rotate(h * D2R);
+  // bateau choisi (même icône que sur la carte), voiles réglées selon le TWA
   const L = Rd * 0.5;
-  c.beginPath(); c.moveTo(0, -L);
-  c.bezierCurveTo(L * 0.4, -L * 0.45, L * 0.34, L * 0.55, L * 0.2, L * 0.95); c.lineTo(-L * 0.2, L * 0.95);
-  c.bezierCurveTo(-L * 0.34, L * 0.55, -L * 0.4, -L * 0.45, 0, -L); c.closePath();
-  g = c.createLinearGradient(-L * 0.4, 0, L * 0.4, 0); g.addColorStop(0, '#dbe7f2'); g.addColorStop(0.5, '#ffffff'); g.addColorStop(1, '#c3d3e2');
-  c.fillStyle = g; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#0b1b2b'; c.stroke();
-  const side = sn.twa >= 0 ? -1 : 1, sa = clamp(Math.abs(sn.twa) * 0.5, 4, 88) * D2R, mx = 0, my = -L * 0.18, bl = L * 1.0;
-  const ex = mx + side * Math.sin(sa) * bl, ey = my + Math.cos(sa) * bl;
-  const cx1 = mx + side * (Math.sin(sa) * bl * 0.55 + L * 0.16), cy1 = my + Math.cos(sa) * bl * 0.5;
-  c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey); c.lineTo(mx, my);
-  c.fillStyle = 'rgba(255,255,255,.28)'; c.fill();
-  c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey);
-  c.lineWidth = 5; c.lineCap = 'round'; c.strokeStyle = '#ffffff'; c.stroke(); c.lineCap = 'butt';
-  c.beginPath(); c.arc(mx, my, 6, 0, 7); c.fillStyle = '#0b1b2b'; c.fill();
+  c.save(); c.translate(cx, cy); c.rotate(h * D2R);
+  drawBoatIcon(c, S.boat, sn.twa, L, true);
   c.restore();
 
   // curseurs sur la couronne : cap verrouillé (cyan), cap réel (blanc)
@@ -906,6 +1074,7 @@ function updateUi() {
   $('#cmModeTwa').classList.toggle('on', S.pilotT[0] === 1);
   updateWpDistances();
   renderPend();
+  $('#isoLegend').classList.toggle('hidden', !(S.layers.iso && S.route && S.route.isochrones && S.route.isochrones.length));
   $('#clockUtc').textContent = fmtUtc(sn.now);
   $('#clockLocal').textContent = 'local ' + fmtLocal(sn.now);
   $('#elapsed').textContent = `J+${Math.floor(sn.elapsed_s / 86400)} ${pad2(Math.floor((sn.elapsed_s % 86400) / 3600))}:${pad2(Math.floor((sn.elapsed_s % 3600) / 60))}`;

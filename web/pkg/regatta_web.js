@@ -10,11 +10,40 @@ export class Sim {
         wasm.__wbg_sim_free(ptr, 0);
     }
     /**
+     * État de la partie (temps, bateau, adversaires, trace) en JSON, pour la sauvegarde.
+     * Le pilote et la route sont sauvegardés côté JavaScript (`pilot_target`, route du routeur).
+     * @returns {string}
+     */
+    export_state() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.sim_export_state(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * @returns {boolean}
      */
     follow_route() {
         const ret = wasm.sim_follow_route(this.__wbg_ptr);
         return ret !== 0;
+    }
+    /**
+     * Restaure un état produit par `export_state` sur la même partie (même parcours, même vent).
+     * @param {string} json
+     */
+    import_state(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sim_import_state(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * @returns {string}
