@@ -26,6 +26,12 @@ Tout réglage manuel (compas, TWA, VMG, point) coupe l'alignement ; la case « L
 La route montre ses points estimés, l'heure toutes les 6 h, les virements (rouge) et empannages (vert) ; survole un point pour le détail.
 Après un import GPX, « Suivre la route GPX » fait suivre au pilote les points datés du fichier.
 
+## Performance (calibrage de la polaire)
+La polaire générique va trop vite pour un bateau réel. Section « Mon bateau → Performance » : curseur « Polaire × % », **Calibrer** sur la vitesse
+réelle saisie (à l'allure et au vent actuels) ou **Calibrer depuis le GPX** (médiane des vitesses du fichier comparées à la polaire dans le vent du modèle).
+Le facteur s'applique au bateau, aux adversaires et au routeur (la route est recalculée), il est mémorisé et sauvegardé avec la partie.
+Il compense aussi l'écart entre le vent GFS et celui de ton jeu : à recaler si les conditions changent beaucoup.
+
 ## Sauvegarde de la partie
 Sauvegarde automatique toutes les 5 s dans le navigateur (case « Partie »), reprise au rechargement : position, cap, vitesse, temps de jeu,
 adversaires, pilote (cap / TWA / VMG / point / route), route idéale, points de routage, route GPX et vitesse du temps.

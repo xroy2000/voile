@@ -10,10 +10,14 @@ self.onmessage = async (e) => {
       case 'init': {
         await init();
         sim = new Sim(m.wind ?? undefined, m.land ?? undefined, m.polar ?? undefined, m.now);
+        sim.set_perf(m.perf ?? 1);
         if (m.course) sim.reset(m.course.sLat, m.course.sLon, m.course.fLat, m.course.fLon, m.now);
         self.postMessage({ type: 'ready' });
         break;
       }
+      case 'perf':
+        sim.set_perf(m.perf);
+        break;
       case 'polar':
         sim.set_polar(m.text);
         self.postMessage({ type: 'polarOk' });

@@ -75,6 +75,53 @@ function segDistNm(a, b, p) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+// ------------------------------------------------------------------ performance du bateau (calibrage de la polaire)
+function syncPerfUi() {
+  $('#bPerf').value = Math.round(S.perf * 100); $('#perfVal').textContent = Math.round(S.perf * 100) + ' %';
+}
+/** Facteur appliqué à la polaire : bateau du joueur, adversaires et routeur (calcul de la route relancé). */
+function setPerf(v, reroute = true) {
+  S.perf = clamp(v, 0.05, 1.5);
+  S.sim.set_perf(S.perf);
+  S.worker.postMessage({ type: 'perf', perf: S.perf });
+  try { localStorage.setItem('voile.perf', String(S.perf)); } catch { /* ignoré */ }
+  syncPerfUi();
+  if (reroute && S.ready) scheduleReroute();
+}
+/** Médiane des rapports « vitesse du GPX / vitesse de la polaire au vent du modèle » sur les premières heures du fichier. */
+function perfFromGpx() {
+  const P = (S.gpxPts || []).filter((p) => Number.isFinite(p.t) && Number.isFinite(p.speed) && Number.isFinite(p.course));
+  if (!P.length) return null;
+  const t0 = P[0].t, ratios = [];
+  for (const p of P) {
+    if (p.t > t0 + 6 * 3600) break;
+    const w = S.sim.wind_at(p.lat, p.lon, (p.t - S.snap.now) / 3600); // [vent, direction]
+    const ps = S.sim.polar_speed(n180(w[1] - p.course), w[0]);
+    if (ps > 2) ratios.push(p.speed / ps);
+  }
+  if (!ratios.length) return null;
+  ratios.sort((a, b) => a - b);
+  return { perf: ratios[Math.floor(ratios.length / 2)], n: ratios.length };
+}
+function bindPerfUi() {
+  syncPerfUi();
+  $('#bPerf').oninput = (e) => { setPerf(+e.target.value / 100); $('#perfInfo').textContent = 'Réglage manuel.'; };
+  $('#btnPerfCal').onclick = () => {
+    const kn = parseFloat($('#perfKn').value), sn = S.snap;
+    const ps = S.sim.polar_speed(sn.twa, sn.tws);
+    if (!(kn > 0)) { $('#perfInfo').textContent = 'Saisis ta vitesse réelle en nœuds.'; return; }
+    if (ps < 1) { $('#perfInfo').textContent = 'Vent ou allure actuels trop faibles pour calibrer : la polaire y donne presque 0 nœud.'; return; }
+    setPerf(kn / ps);
+    $('#perfInfo').textContent = `Calibré sur ${kn.toFixed(1)} nds à TWA ${Math.abs(sn.twa).toFixed(0)}°, vent ${sn.tws.toFixed(0)} nds : polaire × ${Math.round(S.perf * 100)} %.`;
+  };
+  $('#btnPerfGpx').onclick = () => {
+    const r = perfFromGpx();
+    if (!r) { $('#perfInfo').textContent = 'Le GPX n’a pas de vitesses et de caps exploitables.'; return; }
+    setPerf(r.perf);
+    $('#perfInfo').textContent = `Calibré depuis le GPX (médiane de ${r.n} points) : polaire × ${Math.round(S.perf * 100)} %.`;
+  };
+}
+
 // ------------------------------------------------------------------ icône du bateau (personnalisable)
 const BOAT_TYPES = { mono: 'Monocoque IMOCA', tri: 'Trimaran', cata: 'Catamaran', cruiser: 'Voilier classique' };
 const BOAT_DEFAULT = { type: 'mono', hull: '#f2f6fb', accent: '#4d8dff', sail: '#ffffff', size: 1.2, showSail: true };
@@ -181,7 +228,7 @@ const S = {
   layers: { wind: true, iso: true, route: true },
   follow: false, armPoint: false, waypoint: null,
   wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
-  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null, simMode: false, real: null, align: true, gpxPts: null, hoverPx: null,
+  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null, simMode: false, real: null, align: true, gpxPts: null, hoverPx: null, perf: 1,
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
@@ -200,7 +247,7 @@ function buildSave() {
   return {
     v: 2, savedAt: Date.now(), game: R ? R.game : S.sim.export_state(),
     course: { sLat: i.start.lat, sLon: i.start.lon, fLat: i.finish.lat, fLon: i.finish.lon, startUnix: i.start_unix },
-    windTmin: i.t_min, pilot: R ? R.pilot : S.pilotT, align: R ? R.align : S.align,
+    windTmin: i.t_min, perf: S.perf, pilot: R ? R.pilot : S.pilotT, align: R ? R.align : S.align,
     wps: R ? R.wps : S.wps, seq: R ? R.seq : S.seq, route: route ? { ...route, isochrones: [] } : null,
     gpxPts: R ? R.gpxPts : S.gpxPts, cmMode: S.cmMode,
   };
@@ -232,6 +279,7 @@ function applyPilot(pilot, route) {
 function restoreGame(sv, label) {
   const g = JSON.parse(typeof sv.game === 'string' ? sv.game : JSON.stringify(sv.game));
   if (g.now > Date.now() / 1000 + 120) throw new Error('sauvegarde datée dans le futur (ancienne simulation accélérée)');
+  if (sv.perf) S.perf = sv.perf;
   setLoading('Restauration de la partie…');
   S.routeBusy = false; $('#btnRoute').disabled = false; S.currentRouteId = -1;
   createSim(sv.course);
@@ -241,7 +289,7 @@ function restoreGame(sv, label) {
   setGpxPts(sv.gpxPts || null);
   applyPilot(sv.pilot || [0, S.snap.heading, 0], S.route);
   startWorker(sv.course);
-  renderRoute(); renderWpList(); syncAlignUi(); renderGpxBtn();
+  renderRoute(); renderWpList(); syncAlignUi(); renderGpxBtn(); syncPerfUi();
   let note = `${label || 'Partie restaurée'} (sauvegardée à ${hhmmss(sv.savedAt)}, jeu au ${fmtLocal(S.snap.now)} : rattrapage du temps réel en cours).`;
   if (sv.windTmin && S.info.t_min && Math.abs(sv.windTmin - S.info.t_min) > 1) note += ' ⚠ Le vent chargé n’est pas celui de la sauvegarde.';
   $('#saveInfo').textContent = note;
@@ -292,9 +340,11 @@ async function boot() {
     S.data.wind = windResp && windResp.ok ? new Uint8Array(await windResp.arrayBuffer()) : null;
     buildLandPath(JSON.parse(S.data.land));
     S.boat = loadBoat();
+    try { const p = parseFloat(localStorage.getItem('voile.perf')); if (p > 0) S.perf = p; } catch { /* ignoré */ }
     buildSpeedButtons();
     bindUi();
     bindBoatUi();
+    bindPerfUi();
     startWorker();
     bindSaveUi();
     createSim(null);
@@ -334,7 +384,7 @@ function startWorker(course) {
   S.worker?.terminate();
   S.worker = new Worker('worker.js', { type: 'module' });
   S.worker.onmessage = onWorkerMsg;
-  S.worker.postMessage({ type: 'init', wind: S.data.wind, land: S.data.land, polar: S.data.polar, now: course?.startUnix ?? Date.now() / 1000, course });
+  S.worker.postMessage({ type: 'init', wind: S.data.wind, land: S.data.land, polar: S.data.polar, now: course?.startUnix ?? Date.now() / 1000, course, perf: S.perf });
 }
 
 function createSim(course) {
@@ -347,6 +397,7 @@ function createSim(course) {
     S.data.polar = null; S.data.wind = null;
     S.sim = new Sim(undefined, S.data.land ?? undefined, undefined, Date.now() / 1000);
   }
+  S.sim.set_perf(S.perf);
   S.info = JSON.parse(S.sim.info());
   S.snap = JSON.parse(S.sim.snapshot());
   S.route = null; S.waypoint = null; S.ready = false; S.running = false; S.simMode = false; S.real = null; S.align = true; S.gpxPts = null;
@@ -775,7 +826,7 @@ function bindUi() {
 }
 
 function setGpxPts(pts) { S.gpxPts = pts && pts.length > 1 ? pts : null; S.gpxRoute = S.gpxPts ? S.gpxPts.map((p) => [p.lat, p.lon]) : null; }
-function renderGpxBtn() { $('#btnGpxFollow').classList.toggle('hidden', !S.gpxPts); }
+function renderGpxBtn() { $('#btnGpxFollow').classList.toggle('hidden', !S.gpxPts); $('#btnPerfGpx').classList.toggle('hidden', !S.gpxPts); }
 /** Route du GPX au format du pilote : t, lat, lon, cap, TWA, vent, direction, vitesse (le vent vient du modèle chargé). */
 function gpxFlat() {
   const nowS = S.snap.now, out = [], P = S.gpxPts;

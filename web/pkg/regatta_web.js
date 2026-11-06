@@ -94,6 +94,13 @@ export class Sim {
         return this;
     }
     /**
+     * @returns {number}
+     */
+    perf() {
+        const ret = wasm.sim_perf(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * Mode du pilote : [type, a, b] — 0 cap (a = cap), 1 TWA (a = TWA signé), 2 VMG près, 3 VMG portant,
      * 4 vers un point (a, b = lat, lon), 5 route du routeur.
      * @returns {Float64Array}
@@ -124,6 +131,16 @@ export class Sim {
         var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
         return v1;
+    }
+    /**
+     * Vitesse de la polaire (nds) pour un TWA et un vent donnés, sans le facteur de performance.
+     * @param {number} twa
+     * @param {number} tws
+     * @returns {number}
+     */
+    polar_speed(twa, tws) {
+        const ret = wasm.sim_polar_speed(this.__wbg_ptr, twa, tws);
+        return ret;
     }
     /**
      * Repart de zéro sur un nouveau parcours (départ = ta position réelle dans le jeu, par exemple).
@@ -195,6 +212,13 @@ export class Sim {
      */
     set_heading(h) {
         wasm.sim_set_heading(this.__wbg_ptr, h);
+    }
+    /**
+     * Performance du bateau (1.0 = polaire exacte), bornée à 5–150 %. Vaut pour le jeu, les adversaires et le routeur.
+     * @param {number} perf
+     */
+    set_perf(perf) {
+        wasm.sim_set_perf(this.__wbg_ptr, perf);
     }
     /**
      * @param {string} text

@@ -20,6 +20,8 @@ pub struct Sim {
     land: Option<Land>,
     polar: Polar,
     polar_name: String,
+    /// facteur de performance du bateau du joueur (1.0 = polaire exacte) ; les adversaires le suivent
+    perf: f64,
 }
 
 #[derive(Serialize)]
@@ -115,7 +117,17 @@ impl Sim {
     }
 
     fn build_game(&self, course: Course, start: f64) -> Game {
-        Game::new(course, Self::wind_box(&self.wind, start), self.polar.clone(), self.land.clone(), start)
+        let mut g = Game::new(course, Self::wind_box(&self.wind, start), self.polar.clone(), self.land.clone(), start);
+        Self::apply_perf(&mut g, self.perf);
+        g
+    }
+
+    /// Joueur à `perf` × polaire ; adversaires à leur écart habituel (95 % à 99,8 %) de ce niveau.
+    fn apply_perf(g: &mut Game, perf: f64) {
+        g.player.perf = perf;
+        for (i, a) in g.ai.iter_mut().enumerate() {
+            a.boat.perf = (0.95 + 0.012 * i as f64) * perf;
+        }
     }
 }
 
@@ -149,7 +161,7 @@ impl Sim {
             }
             None => now_unix,
         };
-        let mut s = Sim { game: Game::new(Course::route_du_rhum(), Box::new(SyntheticWind::atlantic(0.0)), polar.clone(), None, start), wind, land, polar, polar_name };
+        let mut s = Sim { game: Game::new(Course::route_du_rhum(), Box::new(SyntheticWind::atlantic(0.0)), polar.clone(), None, start), wind, land, polar, polar_name, perf: 1.0 };
         s.game = s.build_game(Course::route_du_rhum(), start);
         Ok(s)
     }
@@ -165,6 +177,21 @@ impl Sim {
         };
         let course = Course { name: "Parcours".into(), start: LatLon::new(start_lat, start_lon), finish: LatLon::new(finish_lat, finish_lon) };
         self.game = self.build_game(course, start);
+    }
+
+    /// Performance du bateau (1.0 = polaire exacte), bornée à 5–150 %. Vaut pour le jeu, les adversaires et le routeur.
+    pub fn set_perf(&mut self, perf: f64) {
+        self.perf = perf.clamp(0.05, 1.5);
+        Self::apply_perf(&mut self.game, self.perf);
+    }
+
+    pub fn perf(&self) -> f64 {
+        self.perf
+    }
+
+    /// Vitesse de la polaire (nds) pour un TWA et un vent donnés, sans le facteur de performance.
+    pub fn polar_speed(&self, twa: f64, tws: f64) -> f64 {
+        self.polar.speed(twa.abs(), tws)
     }
 
     pub fn set_polar(&mut self, text: &str) -> Result<(), JsError> {
@@ -236,14 +263,16 @@ impl Sim {
     /// Route calculée depuis un point et un instant quelconques, sans toucher à la partie en cours
     /// (c'est ce qu'appelle le worker). `quality` : 0 rapide, 1 standard, 2 précis.
     pub fn route_from(&self, lat: f64, lon: f64, t0: f64, quality: u8) -> String {
-        let cfg = RouteConfig::new(LatLon::new(lat, lon), self.game.course.finish, t0).quality(quality);
+        let mut cfg = RouteConfig::new(LatLon::new(lat, lon), self.game.course.finish, t0).quality(quality);
+        cfg.perf = self.perf;
         let r = route(&cfg, self.game.wind.as_ref(), &self.polar, self.game.land_margin.as_ref());
         Self::route_out(&r, cfg.dt_s)
     }
 
     /// Comme `route_from` mais vers un point d'arrivée quelconque (point de routage intermédiaire).
     pub fn route_leg(&self, lat: f64, lon: f64, t0: f64, quality: u8, dest_lat: f64, dest_lon: f64) -> String {
-        let cfg = RouteConfig::new(LatLon::new(lat, lon), LatLon::new(dest_lat, dest_lon), t0).quality(quality);
+        let mut cfg = RouteConfig::new(LatLon::new(lat, lon), LatLon::new(dest_lat, dest_lon), t0).quality(quality);
+        cfg.perf = self.perf;
         let r = route(&cfg, self.game.wind.as_ref(), &self.polar, self.game.land_margin.as_ref());
         Self::route_out(&r, cfg.dt_s)
     }
