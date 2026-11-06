@@ -1,4 +1,4 @@
-# Voile autonome — simulateur de course avec routeur intégré (Rust + WASM)
+# Offshore Racing — simulateur de course au large avec routeur intégré (Rust + WASM)
 
 Simulateur de régate transatlantique (Saint-Malo → Pointe-à-Pitre) : bateau à polaire, pilote automatique
 (cap, TWA, VMG, point, route du routeur), temps accéléré, adversaires, **routeur à isochrones intégré**

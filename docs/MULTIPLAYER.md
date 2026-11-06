@@ -1,4 +1,4 @@
-# Multijoueur — plan d'architecture
+# Offshore Racing — multijoueur : plan d'architecture
 
 Choix validés : **Vercel + Neon Postgres**, inscription par **e-mail + lien magique**, format **course commune en temps réel**
 (même parcours, même vent, un bateau et des ordres par joueur, classement partagé, adversaires visibles sur la carte).
