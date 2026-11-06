@@ -197,6 +197,27 @@ impl Sim {
         Self::route_out(&r, cfg.dt_s)
     }
 
+    /// Comme `route_from` mais vers un point d'arrivée quelconque (point de routage intermédiaire).
+    pub fn route_leg(&self, lat: f64, lon: f64, t0: f64, quality: u8, dest_lat: f64, dest_lon: f64) -> String {
+        let cfg = RouteConfig::new(LatLon::new(lat, lon), LatLon::new(dest_lat, dest_lon), t0).quality(quality);
+        let r = route(&cfg, self.game.wind.as_ref(), &self.polar, self.game.land_margin.as_ref());
+        Self::route_out(&r, cfg.dt_s)
+    }
+
+    /// Mode du pilote : [type, a, b] — 0 cap (a = cap), 1 TWA (a = TWA signé), 2 VMG près, 3 VMG portant,
+    /// 4 vers un point (a, b = lat, lon), 5 route du routeur.
+    pub fn pilot_target(&self) -> Vec<f64> {
+        use regatta_core::boat::Pilot;
+        match &self.game.player.pilot {
+            Pilot::Heading(h) => vec![0.0, *h, 0.0],
+            Pilot::Twa(a) => vec![1.0, *a, 0.0],
+            Pilot::VmgUp => vec![2.0, 0.0, 0.0],
+            Pilot::VmgDown => vec![3.0, 0.0, 0.0],
+            Pilot::Waypoint(p) => vec![4.0, p.lat, p.lon],
+            Pilot::Route(_) => vec![5.0, 0.0, 0.0],
+        }
+    }
+
     /// Mémorise une route (format `to_flat`) pour que le pilote puisse la suivre.
     pub fn set_route_flat(&mut self, flat: &[f64]) -> bool {
         match RouteResult::from_flat(flat, self.game.now) {

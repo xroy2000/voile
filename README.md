@@ -6,6 +6,15 @@ Simulateur de régate transatlantique (Saint-Malo → Pointe-à-Pitre) : bateau 
 
 Aucun asset, code ou polaire de Virtual Regatta n'est inclus ; rien ne s'injecte dans le client VR.
 
+## Pilotage
+- **Compas** (panneau gauche) : rose, bateau avec grand-voile, vent, zone interdite et lignes de près/portant, secteur de TWA
+  (rouge bâbord / vert tribord), cap verrouillé et relèvement du prochain point. Clic ou glisser pour régler le cap
+  (ou le TWA en mode TWA) ; boutons ±1° / ±5°, flèches ← → (Maj = 5°), bouton Virer / empanner.
+- **Points de routage** : 📍 ou « Ajouter sur la carte » (double-clic aussi), glisser pour déplacer, clic droit ou ✕ pour supprimer.
+  « Aller aux points » les fait rallier au pilote dans l'ordre, puis l'arrivée.
+- **Route idéale** ★ : route du routeur affichée en jaune, recalculée automatiquement quand les points changent
+  (tronçon par point, puis arrivée) ; « Suivre la route idéale » engage le pilote dessus.
+
 ## Construire
     rustup target add wasm32-unknown-unknown
     cargo install wasm-bindgen-cli --version 0.2.130 --locked

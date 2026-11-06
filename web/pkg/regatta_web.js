@@ -65,6 +65,17 @@ export class Sim {
         return this;
     }
     /**
+     * Mode du pilote : [type, a, b] — 0 cap (a = cap), 1 TWA (a = TWA signé), 2 VMG près, 3 VMG portant,
+     * 4 vers un point (a, b = lat, lon), 5 route du routeur.
+     * @returns {Float64Array}
+     */
+    pilot_target() {
+        const ret = wasm.sim_pilot_target(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
      * @param {number} tws
      * @returns {Float64Array}
      */
@@ -110,6 +121,28 @@ export class Sim {
         let deferred1_1;
         try {
             const ret = wasm.sim_route_from(this.__wbg_ptr, lat, lon, t0, quality);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Comme `route_from` mais vers un point d'arrivée quelconque (point de routage intermédiaire).
+     * @param {number} lat
+     * @param {number} lon
+     * @param {number} t0
+     * @param {number} quality
+     * @param {number} dest_lat
+     * @param {number} dest_lon
+     * @returns {string}
+     */
+    route_leg(lat, lon, t0, quality, dest_lat, dest_lon) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.sim_route_leg(this.__wbg_ptr, lat, lon, t0, quality, dest_lat, dest_lon);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);

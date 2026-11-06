@@ -54,6 +54,27 @@ function windColor(k) {
   return WIND_STOPS[WIND_STOPS.length - 1][1];
 }
 
+const n360 = (a) => ((a % 360) + 360) % 360;
+const n180 = (a) => { const x = n360(a); return x > 180 ? x - 360 : x; };
+const pad3 = (n) => String(Math.round(n)).padStart(3, '0');
+/** Distance (nm) et relèvement (°) approchés, suffisants pour l'affichage et la détection de passage. */
+function distNm(la1, lo1, la2, lo2) {
+  const dla = (la2 - la1) * 60, dlo = (lo2 - lo1) * 60 * Math.cos(((la1 + la2) / 2) * D2R);
+  return Math.hypot(dla, dlo);
+}
+function bearingDeg(la1, lo1, la2, lo2) {
+  const f1 = la1 * D2R, f2 = la2 * D2R, dl = (lo2 - lo1) * D2R;
+  return n360(Math.atan2(Math.sin(dl) * Math.cos(f2), Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl)) / D2R);
+}
+/** Plus courte distance (nm) du point p au segment a→b (repère plan local). */
+function segDistNm(a, b, p) {
+  const k = Math.cos(((a.lat + b.lat) / 2) * D2R) * 60;
+  const ax = a.lon * k, ay = a.lat * 60, bx = b.lon * k, by = b.lat * 60, px = p.lon * k, py = p.lat * 60;
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const t = L > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / L, 0, 1) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 // ------------------------------------------------------------------ état
 const S = {
   sim: null, worker: null, ready: false,
@@ -61,8 +82,10 @@ const S = {
   info: null, snap: null,
   scale: 600, running: false,
   view: { cx: 0.4, cy: 0.3, z: 3000 },
-  layers: { wind: true, iso: true },
+  layers: { wind: true, iso: true, route: true },
   follow: false, armPoint: false, waypoint: null,
+  wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
+  pilotT: [0, 0, 0], cmMode: 'hdg',
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
@@ -139,7 +162,9 @@ function createSim(course) {
   S.snap = JSON.parse(S.sim.snapshot());
   S.route = null; S.waypoint = null; S.ready = false; S.running = false;
   S.lastAutoAt = -1e18;
+  S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false;
   $('#courseName').textContent = '';
+  renderWpList();
   renderRoute();
   fillCourseInputs();
   updateBadges();
@@ -163,17 +188,81 @@ function onWorkerMsg(e) {
     if (m.id === 'ai') { S.ready = true; S.running = true; S.scale = 600; syncSpeedBtns(); }
     S.routeBusy = false; $('#btnRoute').disabled = false;
     $('#routeStatus').textContent = 'Erreur du routeur : ' + m.message;
+    if (S.reroutePending) scheduleReroute();
   }
 }
 
+// ------------------------------------------------------------------ points de routage
+const activeWps = () => S.wps.filter((w) => !w.done);
+
+function addWp(lat, lon) {
+  S.wps.push({ lat, lon, done: false });
+  renderWpList(); scheduleReroute();
+}
+function removeWp(i) {
+  S.wps.splice(i, 1);
+  if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); else { S.sim.set_waypoint_finish(); S.seq = false; } }
+  renderWpList(); scheduleReroute();
+}
+/** Recalcule la route idéale peu après une modification des points (évite de lancer un calcul à chaque pixel de glisser). */
+function scheduleReroute() {
+  clearTimeout(S.rerouteTimer);
+  S.rerouteTimer = setTimeout(() => {
+    if (!S.ready) return;
+    if (S.routeBusy) { S.reroutePending = true; return; }
+    S.reroutePending = false;
+    const s = S.snap;
+    requestRoute({ q: Math.min(+$('#selQuality').value, 1), lat: s.lat, lon: s.lon, t0: s.now, follow: S.pilotT[0] === 5 });
+  }, 350);
+}
+
+function renderWpList() {
+  const ol = $('#wpList');
+  const next = activeWps()[0];
+  ol.innerHTML = S.wps.map((w, i) => `<li class="${w.done ? 'done' : ''} ${w === next ? 'next' : ''}" data-i="${i}"><span class="n">${i + 1}</span><span class="p">${fmtPos(w.lat, w.lon)}</span><span class="d"></span><button data-del="${i}" title="Supprimer">✕</button></li>`).join('');
+  $('#wpHint').classList.toggle('hidden', S.wps.length > 0);
+  $('#btnWpClear').disabled = S.wps.length === 0;
+  updateWpDistances();
+}
+function updateWpDistances() {
+  const sn = S.snap; if (!sn) return;
+  let la = sn.lat, lo = sn.lon;
+  S.wps.forEach((w, i) => {
+    const el = $('#wpList').children[i]?.querySelector('.d');
+    if (el) el.textContent = w.done ? 'passé' : `${distNm(la, lo, w.lat, w.lon).toFixed(0)} nm`;
+    if (!w.done) { la = w.lat; lo = w.lon; }
+  });
+}
+/** Détecte le passage d'un point (même à vitesse accélérée : on teste le segment parcouru entre deux images). */
+function trackWps(sn) {
+  const prev = S.prevPos || { lat: sn.lat, lon: sn.lon };
+  const cur = { lat: sn.lat, lon: sn.lon };
+  const w = activeWps()[0];
+  if (w && segDistNm(prev, cur, w) < 2) {
+    w.done = true;
+    if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); else { S.sim.set_waypoint_finish(); S.seq = false; } }
+    renderWpList();
+  }
+  S.prevPos = cur;
+}
+function hitWp(px, py) {
+  for (let i = S.wps.length - 1; i >= 0; i--) {
+    const [x, y] = toScreen(S.wps[i].lat, S.wps[i].lon);
+    if (Math.hypot(px - x, py - y) < 13) return i;
+  }
+  return -1;
+}
+
 // ------------------------------------------------------------------ routeur
-function requestRoute({ ai = false, q, lat, lon, t0, auto = false }) {
+function requestRoute({ ai = false, q, lat, lon, t0, auto = false, follow = false }) {
   if (S.routeBusy && !ai) return;
   const id = ai ? 'ai' : ++S.routeId;
-  if (!ai) { S.routeBusy = true; S.routeAuto = auto; S.routeStart = performance.now(); $('#btnRoute').disabled = true; }
+  if (!ai) { S.routeBusy = true; S.routeAuto = auto; S.routeFollow = follow; S.routeStart = performance.now(); $('#btnRoute').disabled = true; }
   S.currentRouteId = ai ? S.currentRouteId : id;
   if (!ai) $('#routeStatus').textContent = 'Calcul en cours… (le jeu continue)';
-  S.worker.postMessage({ type: 'route', id, q, lat, lon, t0 });
+  // la route idéale passe par les points de routage restants, dans l'ordre
+  const wps = ai ? [] : activeWps().map((w) => ({ lat: w.lat, lon: w.lon }));
+  S.worker.postMessage({ type: 'route', id, q, lat, lon, t0, wps });
 }
 
 function flatRoute(r) {
@@ -188,15 +277,18 @@ function onRoute(m) {
     S.sim.set_ai_route_flat(flatRoute(r));
     S.ready = true; S.running = true; S.scale = 600; syncSpeedBtns();
     setLoading(null);
+    // route idéale affichée dès le départ (calcul rapide depuis la position de départ)
+    if (!S.route && S.snap.now - S.info.start_unix < 60) { S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now; renderRoute(); }
     return;
   }
   if (m.id !== S.currentRouteId) return; // résultat périmé (partie réinitialisée)
   S.routeBusy = false;
   $('#btnRoute').disabled = false;
   S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now;
-  if (S.sim.set_route_flat(flatRoute(r)) && (S.routeAuto || S.followAfter)) S.sim.follow_route();
-  S.followAfter = false;
+  if (S.sim.set_route_flat(flatRoute(r)) && (S.routeAuto || S.followAfter || S.routeFollow)) { S.sim.follow_route(); S.seq = false; }
+  S.followAfter = false; S.routeFollow = false;
   renderRoute();
+  if (S.reroutePending) scheduleReroute();
 }
 
 function renderRoute() {
@@ -206,7 +298,9 @@ function renderRoute() {
   sum.classList.remove('hidden');
   const eta = r.eta_unix;
   const lim = S.info.t_max;
-  sum.innerHTML = `<b>${r.reached ? 'Arrivée' : '⚠ Arrivée non atteinte'}</b> ${fmtLocal(eta)} <span class="muted">(${fmtUtc(eta)})</span><br>` +
+  const nVia = r.wp_index ? r.wp_index.length : 0;
+  sum.innerHTML = `<b>Route idéale${nVia ? ` via ${nVia} point${nVia > 1 ? 's' : ''}` : ''}</b><br>` +
+    `<b>${r.reached ? 'Arrivée' : '⚠ Arrivée non atteinte'}</b> ${fmtLocal(eta)} <span class="muted">(${fmtUtc(eta)})</span><br>` +
     `Durée <b>${fmtDur(r.duration_s)}</b> · ${r.distance_nm.toFixed(0)} nm<br>` +
     `${r.tacks} virement(s), ${r.gybes} empannage(s)` +
     (lim && eta > lim ? `<br><span class="alert">Une partie de la route dépasse la prévision (${fmtUtc(lim)}) : vent figé au-delà.</span>` : '') +
@@ -273,12 +367,59 @@ function showMapMsg() {
 function bindUi() {
   $('#btnPause').onclick = () => { S.running = !S.running; syncSpeedBtns(); };
   addEventListener('keydown', (e) => { if (e.code === 'Space' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('#btnPause').click(); } });
-  $('#btnHeading').onclick = () => S.sim.set_heading(+$('#inHeading').value);
-  $('#btnTwa').onclick = () => S.sim.set_twa(+$('#inTwa').value);
-  $('#btnVmgUp').onclick = () => S.sim.set_vmg(true);
-  $('#btnVmgDown').onclick = () => S.sim.set_vmg(false);
-  $('#btnFinish').onclick = () => { S.waypoint = null; S.sim.set_waypoint_finish(); };
-  $('#btnPoint').onclick = () => { S.armPoint = !S.armPoint; $('#btnPoint').classList.toggle('on', S.armPoint); canvas.classList.toggle('arm', S.armPoint); };
+  $('#btnHeading').onclick = () => { S.seq = false; S.sim.set_heading(+$('#inHeading').value); };
+  $('#btnTwa').onclick = () => { S.seq = false; S.sim.set_twa(+$('#inTwa').value); };
+  $('#btnVmgUp').onclick = () => { S.seq = false; S.sim.set_vmg(true); };
+  $('#btnVmgDown').onclick = () => { S.seq = false; S.sim.set_vmg(false); };
+  $('#btnFinish').onclick = () => { S.seq = false; S.waypoint = null; S.sim.set_waypoint_finish(); };
+  const syncArm = () => {
+    $('#btnPoint').classList.toggle('on', S.armPoint); $('#btnWpAdd').classList.toggle('on', S.armWp); $('#btnAddWp').classList.toggle('on', S.armWp);
+    canvas.classList.toggle('arm', S.armPoint || S.armWp);
+  };
+  S.syncArm = syncArm;
+  $('#btnPoint').onclick = () => { S.armPoint = !S.armPoint; S.armWp = false; syncArm(); };
+  const toggleArmWp = () => { S.armWp = !S.armWp; S.armPoint = false; syncArm(); };
+  $('#btnWpAdd').onclick = toggleArmWp; $('#btnAddWp').onclick = toggleArmWp;
+  $('#btnWpClear').onclick = () => { S.wps = []; if (S.seq) { S.sim.set_waypoint_finish(); S.seq = false; } renderWpList(); scheduleReroute(); };
+  $('#btnWpGo').onclick = () => {
+    const n = activeWps()[0];
+    if (!n) { S.sim.set_waypoint_finish(); return; }
+    S.seq = true; S.waypoint = null; S.sim.set_waypoint(n.lat, n.lon);
+  };
+  $('#wpList').addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-del]'); if (b) removeWp(+b.dataset.del); });
+  $('#tgRoute').onclick = (e) => { S.layers.route = !S.layers.route; e.currentTarget.classList.toggle('on', S.layers.route); };
+
+  // compas : cap / TWA verrouillé, réglage au clic-glisser et par pas de 1° / 5°
+  const lockHeading = (h) => { S.seq = false; S.sim.set_heading(n360(Math.round(h))); };
+  const lockTwa = (a) => { S.seq = false; S.sim.set_twa(clamp(Math.round(n180(a)), -180, 180)); };
+  /** Fait tourner le bateau de d° (+ = vers tribord) en gardant le mode (cap ou TWA). */
+  const steer = (d) => {
+    const sn = S.snap, k = S.pilotT[0];
+    const twaMode = k === 1 || (k !== 0 && S.cmMode === 'twa');
+    if (twaMode) lockTwa((k === 1 ? S.pilotT[1] : sn.twa) - d);
+    else lockHeading((k === 0 ? S.pilotT[1] : sn.heading) + d);
+  };
+  $('#cmM5').onclick = () => steer(-5); $('#cmM1').onclick = () => steer(-1);
+  $('#cmP1').onclick = () => steer(1); $('#cmP5').onclick = () => steer(5);
+  $('#cmModeHdg').onclick = () => { S.cmMode = 'hdg'; lockHeading(S.snap.heading); };
+  $('#cmModeTwa').onclick = () => { S.cmMode = 'twa'; lockTwa(S.snap.twa); };
+  $('#cmTack').onclick = () => {
+    const sn = S.snap;
+    if (S.pilotT[0] === 0) lockHeading(2 * sn.twd - sn.heading); else lockTwa(-sn.twa);
+  };
+  const cv = $('#compassCv');
+  const compassAngle = (e) => { const r = cv.getBoundingClientRect(); return n360(Math.atan2(e.clientX - r.left - r.width / 2, -(e.clientY - r.top - r.height / 2)) / D2R); };
+  const compassSet = (a) => { if (S.cmMode === 'twa') lockTwa(S.snap.twd - a); else lockHeading(a); };
+  let cmDrag = false;
+  cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); cmDrag = true; compassSet(compassAngle(e)); });
+  cv.addEventListener('pointermove', (e) => { if (cmDrag) compassSet(compassAngle(e)); });
+  cv.addEventListener('pointerup', () => { cmDrag = false; });
+  addEventListener('keydown', (e) => {
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.code === 'Escape') { S.armPoint = false; S.armWp = false; syncArm(); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); steer(e.shiftKey ? -5 : -1); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); steer(e.shiftKey ? 5 : 1); }
+  });
   $('#tgWind').onclick = (e) => { S.layers.wind = !S.layers.wind; e.currentTarget.classList.toggle('on', S.layers.wind); S.wind.key = ''; };
   $('#tgIso').onclick = (e) => { S.layers.iso = !S.layers.iso; e.currentTarget.classList.toggle('on', S.layers.iso); };
   $('#tgFollow').onclick = (e) => { S.follow = !S.follow; e.currentTarget.classList.toggle('on', S.follow); };
@@ -324,25 +465,40 @@ function bindUi() {
 
   // carte : déplacement, zoom, clic pour poser un point
   let drag = null;
-  canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, cx: S.view.cx, cy: S.view.cy, moved: false }; });
+  const rel = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    const [px, py] = rel(e), wi = e.button === 0 ? hitWp(px, py) : -1;
+    drag = { x: e.clientX, y: e.clientY, cx: S.view.cx, cy: S.view.cy, moved: false, wp: wi };
+  });
   canvas.addEventListener('pointermove', (e) => {
-    const r = canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    const [px, py] = rel(e);
     S.hoverLL = screenToLL(px, py);
     if (drag) {
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
-      if (drag.moved) { S.view.cx = drag.cx - dx / S.view.z; S.view.cy = drag.cy - dy / S.view.z; S.follow = false; $('#tgFollow').classList.remove('on'); }
-    }
+      if (drag.moved && drag.wp >= 0) {
+        // glisser un point de routage
+        const w = S.wps[drag.wp]; w.lat = S.hoverLL.lat; w.lon = S.hoverLL.lon; w.done = false;
+      } else if (drag.moved) { S.view.cx = drag.cx - dx / S.view.z; S.view.cy = drag.cy - dy / S.view.z; S.follow = false; $('#tgFollow').classList.remove('on'); }
+    } else canvas.style.cursor = hitWp(px, py) >= 0 ? 'grab' : '';
   });
   canvas.addEventListener('pointerup', (e) => {
-    if (drag && !drag.moved && S.armPoint) {
-      const r = canvas.getBoundingClientRect();
-      const ll = screenToLL(e.clientX - r.left, e.clientY - r.top);
-      S.waypoint = ll; S.sim.set_waypoint(ll.lat, ll.lon);
-      S.armPoint = false; $('#btnPoint').classList.remove('on'); canvas.classList.remove('arm');
+    if (drag) {
+      const [px, py] = rel(e), ll = screenToLL(px, py);
+      if (drag.moved && drag.wp >= 0) {
+        if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); }
+        renderWpList(); scheduleReroute();
+      } else if (!drag.moved && S.armWp) addWp(ll.lat, ll.lon); // reste armé : on peut poser plusieurs points
+      else if (!drag.moved && S.armPoint) {
+        S.seq = false; S.waypoint = ll; S.sim.set_waypoint(ll.lat, ll.lon);
+        S.armPoint = false; S.syncArm();
+      }
     }
     drag = null;
   });
+  canvas.addEventListener('dblclick', (e) => { const [px, py] = rel(e); if (!S.armWp && hitWp(px, py) < 0) { const ll = screenToLL(px, py); addWp(ll.lat, ll.lon); } });
+  canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); const [px, py] = rel(e), i = hitWp(px, py); if (i >= 0) removeWp(i); });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const r = canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
@@ -434,7 +590,7 @@ function boatShape(x, y, hdg, color, size, outline) {
 function draw() {
   const { w, h, dpr } = S;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#0e3a5c'); g.addColorStop(1, '#0a2a44');
+  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#0a1f3d'); g.addColorStop(1, '#03070f');
   ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
 
   if (S.layers.wind) {
@@ -445,8 +601,8 @@ function draw() {
   // terre
   ctx.save();
   ctx.translate(w / 2 - S.view.cx * S.view.z, h / 2 - S.view.cy * S.view.z); ctx.scale(S.view.z, S.view.z);
-  ctx.fillStyle = '#2e4034'; ctx.fill(S.landPath, 'evenodd');
-  ctx.lineWidth = 1 / S.view.z; ctx.strokeStyle = '#7fa488'; ctx.stroke(S.landPath);
+  ctx.fillStyle = '#141a26'; ctx.fill(S.landPath, 'evenodd');
+  ctx.lineWidth = 1 / S.view.z; ctx.strokeStyle = '#4b5f82'; ctx.stroke(S.landPath);
   ctx.restore();
 
   // graticule
@@ -483,18 +639,40 @@ function draw() {
     tr.forEach(([la, lo], i) => { const [x, y] = toScreen(la, lo); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
     const sn = S.snap; const [bx, by] = toScreen(sn.lat, sn.lon); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
   }
-  // route
-  if (R) {
+  // route idéale (routeur) : trait lumineux jaune, repères de jour, étiquette d'arrivée
+  if (R && S.layers.route) {
     const P = R.points;
-    ctx.lineWidth = 2.6; ctx.strokeStyle = '#f6e05e'; ctx.beginPath();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
     P.forEach((p, i) => { const [x, y] = toScreen(p.lat, p.lon); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.stroke();
+    ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(246,224,94,.22)'; ctx.stroke(); // halo
+    ctx.lineWidth = 2.6; ctx.strokeStyle = '#f6e05e'; ctx.stroke();
     ctx.fillStyle = '#f6e05e'; ctx.font = '10px system-ui'; ctx.textAlign = 'left';
     const t0 = P[0].t; let lastDay = 0;
-    P.forEach((p, i) => {
+    P.forEach((p) => {
       const [x, y] = toScreen(p.lat, p.lon);
       const day = Math.floor((p.t - t0) / 86400);
       if (day > lastDay) { lastDay = day; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.3); ctx.fill(); ctx.fillText(`J+${day}`, x + 6, y - 5); }
+    });
+    const e = P[P.length - 1], [ex, ey] = toScreen(e.lat, e.lon);
+    ctx.font = 'bold 11px system-ui'; ctx.fillText(`★ Route idéale · ${R.reached ? 'arrivée ' + fmtLocal(R.eta_unix) : 'non atteinte'}`, ex + 10, ey - 10);
+  }
+
+  // points de routage : ordre de passage (boat → 1 → 2 … → arrivée), puis marqueurs numérotés
+  {
+    const sn0 = S.snap, act = activeWps();
+    const fin0 = S.info.finish;
+    const chain = [[sn0.lat, sn0.lon], ...act.map((w) => [w.lat, w.lon]), [fin0.lat, fin0.lon]];
+    ctx.setLineDash([2, 6]); ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(180,160,255,.8)'; ctx.beginPath();
+    chain.forEach(([la, lo], i) => { const [x, y] = toScreen(la, lo); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke(); ctx.setLineDash([]);
+    S.wps.forEach((w, i) => {
+      const [x, y] = toScreen(w.lat, w.lon), next = w === act[0];
+      ctx.beginPath(); ctx.arc(x, y, next ? 11 : 9.5, 0, 6.3);
+      ctx.fillStyle = w.done ? 'rgba(74,85,104,.9)' : '#7c5cff'; ctx.fill();
+      ctx.lineWidth = next ? 3 : 2; ctx.strokeStyle = next ? '#fff' : 'rgba(255,255,255,.7)'; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x, y + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     });
   }
 
@@ -504,7 +682,7 @@ function draw() {
   ctx.fillStyle = '#fff'; ctx.font = '11px system-ui'; ctx.fillText('Arrivée', fx + 10, fy + 4);
   const [sx, sy] = toScreen(S.info.start.lat, S.info.start.lon);
   ctx.strokeStyle = '#68d391'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, 5, 0, 6.3); ctx.stroke();
-  if (S.waypoint) { const [x, y] = toScreen(S.waypoint.lat, S.waypoint.lon); ctx.strokeStyle = '#4fd1c5'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.3); ctx.moveTo(x - 12, y); ctx.lineTo(x + 12, y); ctx.moveTo(x, y - 12); ctx.lineTo(x, y + 12); ctx.stroke(); }
+  if (S.waypoint) { const [x, y] = toScreen(S.waypoint.lat, S.waypoint.lon); ctx.strokeStyle = '#4d8dff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.3); ctx.moveTo(x - 12, y); ctx.lineTo(x + 12, y); ctx.moveTo(x, y - 12); ctx.lineTo(x, y + 12); ctx.stroke(); }
 
   // bateaux
   const sn = S.snap;
@@ -516,7 +694,7 @@ function draw() {
     if (S.view.z > 5000) { ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(b.name, x + 8, y + 3); }
   }
   const [px, py] = toScreen(sn.lat, sn.lon);
-  ctx.beginPath(); ctx.arc(px, py, 14, 0, 6.3); ctx.fillStyle = 'rgba(79,209,197,.18)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(px, py, 14, 0, 6.3); ctx.fillStyle = 'rgba(77,141,255,.22)'; ctx.fill();
   boatShape(px, py, sn.heading, '#ffffff', 7, '#0b1b2b');
   // vent vrai sur le bateau
   const wr = (sn.twd + 180) * D2R; ctx.strokeStyle = '#f6ad55'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.sin(wr) * 34, py - Math.cos(wr) * 34); ctx.stroke();
@@ -542,15 +720,123 @@ function drawPolar(sn) {
   c.setLineDash([3, 3]); c.strokeStyle = 'rgba(246,173,85,.8)';
   for (const a of [best[0], best[2]]) { const r = a * D2R; c.beginPath(); c.moveTo(ox, oy); c.lineTo(ox + Math.sin(r) * R, oy - Math.cos(r) * R); c.stroke(); }
   c.setLineDash([]);
-  c.lineWidth = 2; c.strokeStyle = '#4fd1c5'; c.beginPath();
+  c.lineWidth = 2; c.strokeStyle = '#4d8dff'; c.beginPath();
   curve.forEach((v, i) => { const r = i * 2 * D2R; const x = ox + Math.sin(r) * v * sc, y = oy - Math.cos(r) * v * sc; i ? c.lineTo(x, y) : c.moveTo(x, y); });
   c.stroke();
   const ta = Math.abs(sn.twa) * D2R; c.fillStyle = '#fff'; c.beginPath(); c.arc(ox + Math.sin(ta) * sn.speed * sc, oy - Math.cos(ta) * sn.speed * sc, 4, 0, 6.3); c.fill();
   $('#polarInfo').textContent = `Meilleur VMG à ${sn.tws.toFixed(0)} nds : près ${best[0].toFixed(0)}° (${best[1].toFixed(1)} nds) · portant ${best[2].toFixed(0)}° (${best[3].toFixed(1)} nds)`;
 }
 
+/** Compas façon Virtual Regatta : rose nord en haut, bateau avec sa grand-voile, vent, zone interdite, lignes de près/portant,
+ *  secteur de TWA (rouge bâbord / vert tribord), curseur de cap, cap verrouillé et relèvement du prochain point. */
+function drawCompass(sn) {
+  const cv = $('#compassCv'), c = cv.getContext('2d'), W = cv.width, cx = W / 2, cy = W / 2, R = W / 2 - 8, Rd = R * 0.76;
+  const pt = (a, r) => [cx + Math.sin(a * D2R) * r, cy - Math.cos(a * D2R) * r];
+  const ca = (a) => (a - 90) * D2R;
+  const [kind, tv] = S.pilotT;
+  c.clearRect(0, 0, W, W);
+
+  // boîtier et cadran
+  let g = c.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+  g.addColorStop(0, '#1d3566'); g.addColorStop(1, '#04070e');
+  c.beginPath(); c.arc(cx, cy, R, 0, 7); c.fillStyle = g; c.fill();
+  c.lineWidth = 4; c.strokeStyle = '#2f5fae'; c.stroke();
+  g = c.createRadialGradient(cx, cy, 0, cx, cy, Rd);
+  g.addColorStop(0, '#0b2347'); g.addColorStop(1, '#03060d');
+  c.beginPath(); c.arc(cx, cy, Rd, 0, 7); c.fillStyle = g; c.fill();
+  c.lineWidth = 2; c.strokeStyle = '#1c3a6e'; c.stroke();
+
+  // graduations et repères
+  for (let a = 0; a < 360; a += 5) {
+    const major = a % 30 === 0, mid = a % 10 === 0;
+    c.beginPath(); c.moveTo(...pt(a, Rd + 3)); c.lineTo(...pt(a, Rd + (major ? 20 : mid ? 14 : 8)));
+    c.lineWidth = major ? 3 : 1.5; c.strokeStyle = major ? '#e6eef5' : 'rgba(230,238,245,.5)'; c.stroke();
+  }
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (let a = 0; a < 360; a += 30) {
+    const card = { 0: 'N', 90: 'E', 180: 'S', 270: 'O' }[a];
+    const [x, y] = pt(a, Rd + 40);
+    c.font = card ? 'bold 30px system-ui' : '19px system-ui';
+    c.fillStyle = card ? (a === 0 ? '#fc8181' : '#4d8dff') : 'rgba(230,238,245,.75)';
+    c.fillText(card || pad3(a), x, y);
+  }
+
+  // zone interdite (face au vent) et lignes de près / portant au vent actuel
+  const best = S.sim.polar_best_angles(Math.max(sn.tws, 0.1)), up = best[0], down = best[2];
+  c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, Rd - 2, ca(sn.twd - up), ca(sn.twd + up)); c.closePath();
+  c.fillStyle = 'rgba(252,129,129,.13)'; c.fill();
+  c.setLineDash([8, 7]); c.lineWidth = 2;
+  for (const [a, col] of [[sn.twd - up, 'rgba(246,173,85,.85)'], [sn.twd + up, 'rgba(246,173,85,.85)'], [sn.twd - down, 'rgba(104,211,145,.75)'], [sn.twd + down, 'rgba(104,211,145,.75)']]) {
+    c.beginPath(); c.moveTo(...pt(a, Rd * 0.2)); c.lineTo(...pt(a, Rd - 2)); c.strokeStyle = col; c.stroke();
+  }
+  c.setLineDash([]);
+
+  // secteur de TWA : de la proue au vent, vert si le vent vient de tribord, rouge de bâbord
+  const ra = Rd * 0.5, h = sn.heading;
+  c.beginPath();
+  if (sn.twa >= 0) c.arc(cx, cy, ra, ca(h), ca(h + sn.twa)); else c.arc(cx, cy, ra, ca(h + sn.twa), ca(h));
+  c.lineWidth = 16; c.strokeStyle = sn.twa >= 0 ? 'rgba(104,211,145,.55)' : 'rgba(252,129,129,.55)'; c.stroke();
+
+  // flèche de vent (vient de twd, souffle vers le centre)
+  const [tx, ty] = pt(sn.twd, Rd * 0.97), [hx, hy] = pt(sn.twd, Rd * 0.6);
+  c.beginPath(); c.moveTo(tx, ty); c.lineTo(hx, hy); c.lineWidth = 5; c.strokeStyle = '#f6ad55'; c.lineCap = 'round'; c.stroke();
+  c.save(); c.translate(hx, hy); c.rotate((sn.twd + 180) * D2R);
+  c.beginPath(); c.moveTo(0, -16); c.lineTo(-11, 6); c.lineTo(11, 6); c.closePath(); c.fillStyle = '#f6ad55'; c.fill(); c.restore();
+  c.lineCap = 'butt';
+
+  // bateau + grand-voile (réglée sous le vent, ouverte selon le TWA)
+  c.save(); c.translate(cx, cy); c.rotate(h * D2R);
+  const L = Rd * 0.5;
+  c.beginPath(); c.moveTo(0, -L);
+  c.bezierCurveTo(L * 0.4, -L * 0.45, L * 0.34, L * 0.55, L * 0.2, L * 0.95); c.lineTo(-L * 0.2, L * 0.95);
+  c.bezierCurveTo(-L * 0.34, L * 0.55, -L * 0.4, -L * 0.45, 0, -L); c.closePath();
+  g = c.createLinearGradient(-L * 0.4, 0, L * 0.4, 0); g.addColorStop(0, '#dbe7f2'); g.addColorStop(0.5, '#ffffff'); g.addColorStop(1, '#c3d3e2');
+  c.fillStyle = g; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#0b1b2b'; c.stroke();
+  const side = sn.twa >= 0 ? -1 : 1, sa = clamp(Math.abs(sn.twa) * 0.5, 4, 88) * D2R, mx = 0, my = -L * 0.18, bl = L * 1.0;
+  const ex = mx + side * Math.sin(sa) * bl, ey = my + Math.cos(sa) * bl;
+  const cx1 = mx + side * (Math.sin(sa) * bl * 0.55 + L * 0.16), cy1 = my + Math.cos(sa) * bl * 0.5;
+  c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey); c.lineTo(mx, my);
+  c.fillStyle = 'rgba(255,255,255,.28)'; c.fill();
+  c.beginPath(); c.moveTo(mx, my); c.quadraticCurveTo(cx1, cy1, ex, ey);
+  c.lineWidth = 5; c.lineCap = 'round'; c.strokeStyle = '#ffffff'; c.stroke(); c.lineCap = 'butt';
+  c.beginPath(); c.arc(mx, my, 6, 0, 7); c.fillStyle = '#0b1b2b'; c.fill();
+  c.restore();
+
+  // curseurs sur la couronne : cap verrouillé (cyan), cap réel (blanc)
+  const tri = (a, col, size, r) => {
+    const [x, y] = pt(a, r); c.save(); c.translate(x, y); c.rotate(a * D2R);
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(-size * 0.7, -size); c.lineTo(size * 0.7, -size); c.closePath();
+    c.fillStyle = col; c.fill(); c.lineWidth = 2; c.strokeStyle = '#0b1b2b'; c.stroke(); c.restore();
+  };
+  const lockHdg = kind === 0 ? tv : kind === 1 ? n360(sn.twd - tv) : null;
+  if (lockHdg !== null) tri(lockHdg, '#4d8dff', 30, Rd + 4);
+  c.beginPath(); c.moveTo(...pt(h, L + 6)); c.lineTo(...pt(h, Rd - 2)); c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.9)'; c.stroke();
+  tri(h, '#ffffff', 24, Rd + 4);
+
+  // relèvement du prochain point (point de routage actif, sinon arrivée)
+  const nx = activeWps()[0] || S.info.finish;
+  const brg = bearingDeg(sn.lat, sn.lon, nx.lat, nx.lon), [bx, by] = pt(brg, Rd - 16);
+  c.beginPath(); c.arc(bx, by, 11, 0, 7); c.fillStyle = activeWps()[0] ? '#7c5cff' : '#fc8181'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#fff'; c.stroke();
+
+  // lectures : vitesse en haut, cap et TWA en bas
+  const pill = (x, y, w, hh) => { c.beginPath(); c.roundRect(x - w / 2, y - hh / 2, w, hh, 14); c.fillStyle = 'rgba(5,15,25,.78)'; c.fill(); c.lineWidth = 1.5; c.strokeStyle = 'rgba(77,141,255,.5)'; c.stroke(); };
+  pill(cx, cy - Rd * 0.66, Rd * 0.95, 62);
+  c.fillStyle = '#4d8dff'; c.font = 'bold 34px system-ui'; c.fillText(`${sn.speed.toFixed(1)} nds`, cx, cy - Rd * 0.66 - 7);
+  c.fillStyle = '#f6ad55'; c.font = '17px system-ui'; c.fillText(`vent ${sn.tws.toFixed(1)} nds · ${pad3(sn.twd)}°`, cx, cy - Rd * 0.66 + 20);
+  pill(cx, cy + Rd * 0.7, Rd * 1.25, 74);
+  c.font = '16px system-ui'; c.fillStyle = 'rgba(230,238,245,.7)';
+  c.fillText(kind === 0 ? 'CAP ●' : 'CAP', cx - Rd * 0.32, cy + Rd * 0.7 - 22);
+  c.fillText(kind === 1 ? 'TWA ●' : 'TWA', cx + Rd * 0.32, cy + Rd * 0.7 - 22);
+  c.font = 'bold 36px system-ui'; c.fillStyle = '#fff'; c.fillText(`${pad3(h)}°`, cx - Rd * 0.32, cy + Rd * 0.7 + 10);
+  c.fillStyle = sn.twa >= 0 ? '#68d391' : '#fc8181'; c.fillText(`${sn.twa >= 0 ? '+' : '−'}${Math.abs(Math.round(sn.twa))}°`, cx + Rd * 0.32, cy + Rd * 0.7 + 10);
+  c.textAlign = 'start'; c.textBaseline = 'alphabetic';
+}
+
 function updateUi() {
   const sn = S.snap;
+  $('#cmModeHdg').classList.toggle('on', S.pilotT[0] === 0);
+  $('#cmModeTwa').classList.toggle('on', S.pilotT[0] === 1);
+  updateWpDistances();
   $('#clockUtc').textContent = fmtUtc(sn.now);
   $('#clockLocal').textContent = 'local ' + fmtLocal(sn.now);
   $('#elapsed').textContent = `J+${Math.floor(sn.elapsed_s / 86400)} ${pad2(Math.floor((sn.elapsed_s % 86400) / 3600))}:${pad2(Math.floor((sn.elapsed_s % 3600) / 60))}`;
@@ -587,7 +873,11 @@ function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000); last = now;
   try {
     if (S.ready && S.running) S.sim.tick(dt * S.scale);
+    else if (S.ready && !S.primed) { S.sim.tick(0.01); S.primed = true; } // en pause dès le départ : amorce vent/vitesse pour l'affichage
     S.snap = JSON.parse(S.sim.snapshot());
+    S.pilotT = Array.from(S.sim.pilot_target());
+    if (S.ready) trackWps(S.snap);
+    drawCompass(S.snap);
     if (S.follow) { S.view.cx = mercX(S.snap.lon); S.view.cy = mercY(S.snap.lat); }
     if (now - S.infoAt > 1000) { S.info = JSON.parse(S.sim.info()); S.infoAt = now; }
     if (now - S.uiAt > 200) { updateUi(); S.uiAt = now; }
