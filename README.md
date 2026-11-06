@@ -6,6 +6,8 @@ Simulateur de régate transatlantique (Saint-Malo → Pointe-à-Pitre) : bateau 
 
 Aucun asset, code ou polaire de Virtual Regatta n'est inclus ; rien ne s'injecte dans le client VR.
 
+**En ligne : https://offshore-racing.vercel.app** (publié automatiquement à chaque `git push` sur `main`).
+
 ## Pilotage
 - **Compas** (panneau gauche) : rose, bateau avec grand-voile, vent, zone interdite et lignes de près/portant, secteur de TWA
   (rouge bâbord / vert tribord), cap verrouillé et relèvement du prochain point. Clic ou glisser pour régler le cap
