@@ -9,11 +9,15 @@ Aucun asset, code ou polaire de Virtual Regatta n'est inclus ; rien ne s'injecte
 ## Pilotage
 - **Compas** (panneau gauche) : rose, bateau avec grand-voile, vent, zone interdite et lignes de près/portant, secteur de TWA
   (rouge bâbord / vert tribord), cap verrouillé et relèvement du prochain point. Clic ou glisser pour régler le cap
-  (ou le TWA en mode TWA) ; boutons ±1° / ±5°, flèches ← → (Maj = 5°), bouton Virer / empanner.
+  (ou le TWA en mode TWA) : le cap proposé s'affiche en jaune et ne s'applique qu'après **Valider** (Entrée) ; **Annuler** (Échap) l'abandonne. Boutons ±1° / ±5°, flèches ← → (Maj = 5°), bouton Virer / empanner.
 - **Points de routage** : 📍 ou « Ajouter sur la carte » (double-clic aussi), glisser pour déplacer, clic droit ou ✕ pour supprimer.
   « Aller aux points » les fait rallier au pilote dans l'ordre, puis l'arrivée.
 - **Route idéale** ★ : route du routeur affichée en jaune, recalculée automatiquement quand les points changent
   (tronçon par point, puis arrivée) ; « Suivre la route idéale » engage le pilote dessus.
+
+## Importer ma position (GPX)
+Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau est placé là, le jeu en pause,
+le cap du fichier repris s'il existe, et la route du fichier est tracée en pointillés bleus (« Route GPX »).
 
 ## Construire
     rustup target add wasm32-unknown-unknown

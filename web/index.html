@@ -35,7 +35,11 @@
       <div class="row wrap">
         <button id="cmTack" title="Virer / empanner : passe sur l’autre amure">⇄ Virer / empanner</button>
       </div>
-      <div class="muted small">Clique ou fais glisser sur le compas pour régler le cap (ou le TWA en mode TWA). <span class="kc kc-red">bâbord</span> <span class="kc kc-green">tribord</span></div>
+      <div id="cmConfirm" class="cmconfirm hidden">
+        <div id="cmPendTxt"></div>
+        <div class="row"><button id="cmCancel" title="Échap">✕ Annuler</button><button id="cmOk" class="primary" title="Entrée">✓ Valider</button></div>
+      </div>
+      <div class="muted small">Clique ou fais glisser sur le compas pour proposer un cap (ou un TWA en mode TWA), puis valide. <span class="kc kc-red">bâbord</span> <span class="kc kc-green">tribord</span></div>
     </section>
 
     <section>
@@ -74,6 +78,8 @@
       <h3>Données</h3>
       <div class="row wrap"><label class="file">Vent (wind.bin)<input id="fileWind" type="file" accept=".bin"></label>
       <label class="file">Polaire (.csv / .pol)<input id="filePolar" type="file" accept=".csv,.pol,.txt,.tsv"></label></div>
+      <div class="row wrap"><label class="file" title="Place le bateau sur la position du fichier GPX (piste : dernier point ; route ou waypoint : premier point)">Importer GPX (position)<input id="fileGpx" type="file" accept=".gpx,.xml"></label></div>
+      <div class="muted small" id="gpxInfo"></div>
       <div class="muted small" id="dataInfo"></div>
       <div id="dataErr" class="alert small hidden"></div>
     </section>

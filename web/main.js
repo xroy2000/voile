@@ -85,7 +85,7 @@ const S = {
   layers: { wind: true, iso: true, route: true },
   follow: false, armPoint: false, waypoint: null,
   wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
-  pilotT: [0, 0, 0], cmMode: 'hdg',
+  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null,
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
@@ -162,7 +162,7 @@ function createSim(course) {
   S.snap = JSON.parse(S.sim.snapshot());
   S.route = null; S.waypoint = null; S.ready = false; S.running = false;
   S.lastAutoAt = -1e18;
-  S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false;
+  S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false; S.pend = null; S.gpxRoute = null; renderPend();
   $('#courseName').textContent = '';
   renderWpList();
   renderRoute();
@@ -190,6 +190,27 @@ function onWorkerMsg(e) {
     $('#routeStatus').textContent = 'Erreur du routeur : ' + m.message;
     if (S.reroutePending) scheduleReroute();
   }
+}
+
+// ------------------------------------------------------------------ compas : cap proposé, à valider
+const pendHeading = (sn) => (S.pend.mode === 'hdg' ? n360(S.pend.v) : n360(sn.twd - S.pend.v));
+function setPend(mode, v) {
+  S.pend = { mode, v: mode === 'hdg' ? n360(Math.round(v)) : clamp(Math.round(n180(v)), -180, 180) };
+  renderPend();
+}
+function cancelPend() { S.pend = null; renderPend(); }
+function applyPend() {
+  if (!S.pend) return;
+  S.seq = false;
+  if (S.pend.mode === 'hdg') S.sim.set_heading(S.pend.v); else S.sim.set_twa(S.pend.v);
+  S.pend = null; renderPend();
+}
+function renderPend() {
+  const box = $('#cmConfirm');
+  box.classList.toggle('hidden', !S.pend);
+  if (!S.pend || !S.snap) return;
+  const h = pendHeading(S.snap), twa = n180(S.snap.twd - h);
+  $('#cmPendTxt').textContent = `Nouveau cap ${pad3(h)}° · TWA ${twa >= 0 ? '+' : '−'}${Math.abs(Math.round(twa))}°` + (S.pend.mode === 'twa' ? ' (TWA verrouillé)' : '');
 }
 
 // ------------------------------------------------------------------ points de routage
@@ -277,6 +298,7 @@ function onRoute(m) {
     S.sim.set_ai_route_flat(flatRoute(r));
     S.ready = true; S.running = true; S.scale = 600; syncSpeedBtns();
     setLoading(null);
+    if (S.afterReady) { const f = S.afterReady; S.afterReady = null; f(); }
     // route idéale affichée dès le départ (calcul rapide depuis la position de départ)
     if (!S.route && S.snap.now - S.info.start_unix < 60) { S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now; renderRoute(); }
     return;
@@ -389,36 +411,38 @@ function bindUi() {
   $('#wpList').addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-del]'); if (b) removeWp(+b.dataset.del); });
   $('#tgRoute').onclick = (e) => { S.layers.route = !S.layers.route; e.currentTarget.classList.toggle('on', S.layers.route); };
 
-  // compas : cap / TWA verrouillé, réglage au clic-glisser et par pas de 1° / 5°
-  const lockHeading = (h) => { S.seq = false; S.sim.set_heading(n360(Math.round(h))); };
-  const lockTwa = (a) => { S.seq = false; S.sim.set_twa(clamp(Math.round(n180(a)), -180, 180)); };
-  /** Fait tourner le bateau de d° (+ = vers tribord) en gardant le mode (cap ou TWA). */
-  const steer = (d) => {
+  // compas : les changements sont proposés (aperçu jaune sur le compas) puis validés ou annulés
+  const cmSteer = (d) => {
+    // d > 0 : vers tribord (le cap augmente, donc le TWA diminue)
     const sn = S.snap, k = S.pilotT[0];
-    const twaMode = k === 1 || (k !== 0 && S.cmMode === 'twa');
-    if (twaMode) lockTwa((k === 1 ? S.pilotT[1] : sn.twa) - d);
-    else lockHeading((k === 0 ? S.pilotT[1] : sn.heading) + d);
+    const mode = S.pend ? S.pend.mode : k === 1 ? 'twa' : k === 0 ? 'hdg' : S.cmMode;
+    const base = S.pend ? S.pend.v : mode === 'twa' ? (k === 1 ? S.pilotT[1] : sn.twa) : (k === 0 ? S.pilotT[1] : sn.heading);
+    setPend(mode, mode === 'twa' ? base - d : base + d);
   };
-  $('#cmM5').onclick = () => steer(-5); $('#cmM1').onclick = () => steer(-1);
-  $('#cmP1').onclick = () => steer(1); $('#cmP5').onclick = () => steer(5);
-  $('#cmModeHdg').onclick = () => { S.cmMode = 'hdg'; lockHeading(S.snap.heading); };
-  $('#cmModeTwa').onclick = () => { S.cmMode = 'twa'; lockTwa(S.snap.twa); };
+  $('#cmM5').onclick = () => cmSteer(-5); $('#cmM1').onclick = () => cmSteer(-1);
+  $('#cmP1').onclick = () => cmSteer(1); $('#cmP5').onclick = () => cmSteer(5);
+  $('#cmModeHdg').onclick = () => { S.cmMode = 'hdg'; if (S.pilotT[0] !== 0 || S.pend) setPend('hdg', S.pend ? pendHeading(S.snap) : S.snap.heading); };
+  $('#cmModeTwa').onclick = () => { S.cmMode = 'twa'; if (S.pilotT[0] !== 1 || S.pend) setPend('twa', S.pend ? n180(S.snap.twd - pendHeading(S.snap)) : S.snap.twa); };
   $('#cmTack').onclick = () => {
-    const sn = S.snap;
-    if (S.pilotT[0] === 0) lockHeading(2 * sn.twd - sn.heading); else lockTwa(-sn.twa);
+    const sn = S.snap, k = S.pilotT[0];
+    const mode = S.pend ? S.pend.mode : k === 0 ? 'hdg' : 'twa';
+    if (mode === 'hdg') setPend('hdg', 2 * sn.twd - pendHeading(sn));
+    else setPend('twa', -(S.pend ? S.pend.v : sn.twa));
   };
+  $('#cmOk').onclick = applyPend; $('#cmCancel').onclick = cancelPend;
   const cv = $('#compassCv');
   const compassAngle = (e) => { const r = cv.getBoundingClientRect(); return n360(Math.atan2(e.clientX - r.left - r.width / 2, -(e.clientY - r.top - r.height / 2)) / D2R); };
-  const compassSet = (a) => { if (S.cmMode === 'twa') lockTwa(S.snap.twd - a); else lockHeading(a); };
+  const compassSet = (a) => { if (S.cmMode === 'twa') setPend('twa', S.snap.twd - a); else setPend('hdg', a); };
   let cmDrag = false;
   cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); cmDrag = true; compassSet(compassAngle(e)); });
   cv.addEventListener('pointermove', (e) => { if (cmDrag) compassSet(compassAngle(e)); });
   cv.addEventListener('pointerup', () => { cmDrag = false; });
   addEventListener('keydown', (e) => {
     if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-    if (e.code === 'Escape') { S.armPoint = false; S.armWp = false; syncArm(); }
-    else if (e.code === 'ArrowLeft') { e.preventDefault(); steer(e.shiftKey ? -5 : -1); }
-    else if (e.code === 'ArrowRight') { e.preventDefault(); steer(e.shiftKey ? 5 : 1); }
+    if (e.code === 'Escape') { S.armPoint = false; S.armWp = false; syncArm(); cancelPend(); }
+    else if (e.code === 'Enter' && S.pend) { e.preventDefault(); applyPend(); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); cmSteer(e.shiftKey ? -5 : -1); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); cmSteer(e.shiftKey ? 5 : 1); }
   });
   $('#tgWind').onclick = (e) => { S.layers.wind = !S.layers.wind; e.currentTarget.classList.toggle('on', S.layers.wind); S.wind.key = ''; };
   $('#tgIso').onclick = (e) => { S.layers.iso = !S.layers.iso; e.currentTarget.classList.toggle('on', S.layers.iso); };
@@ -445,6 +469,10 @@ function bindUi() {
   };
   $('#btnPreset').onclick = () => resetGame(null);
 
+  $('#fileGpx').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { importGpx(await f.text(), f.name); } catch (err) { $('#gpxInfo').textContent = ''; showDataErr('GPX : ' + String(err.message || err)); }
+  };
   $('#fileWind').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     showDataErr('');
@@ -509,6 +537,30 @@ function bindUi() {
   }, { passive: false });
   addEventListener('resize', resize);
   new ResizeObserver(resize).observe($('#mapwrap'));
+}
+
+/** Place le bateau sur la position d'un GPX : piste (trk) = dernier point, route (rte) ou waypoint = premier point.
+ *  Garde l'arrivée actuelle, met le jeu en pause, reprend le cap du fichier s'il y en a un, et affiche la route du fichier. */
+function importGpx(text, name) {
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('fichier illisible');
+  const read = (tag) => [...doc.getElementsByTagName(tag)].map((el) => ({
+    lat: parseFloat(el.getAttribute('lat')), lon: parseFloat(el.getAttribute('lon')),
+    course: parseFloat(el.getElementsByTagName('course')[0]?.textContent), time: el.getElementsByTagName('time')[0]?.textContent,
+  })).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  let kind = 'piste', pts = read('trkpt'), pos;
+  if (pts.length) pos = pts[pts.length - 1];
+  else { kind = 'route'; pts = read('rtept'); if (!pts.length) { kind = 'waypoint'; pts = read('wpt'); } pos = pts[0]; }
+  if (!pos) throw new Error('aucun point trouvé');
+  const fin = S.info.finish;
+  resetGame({ sLat: pos.lat, sLon: pos.lon, fLat: fin.lat, fLon: fin.lon });
+  S.afterReady = () => {
+    S.running = false; syncSpeedBtns();
+    if (Number.isFinite(pos.course)) S.sim.set_heading(pos.course);
+    if (pts.length > 1) S.gpxRoute = pts.map((p) => [p.lat, p.lon]);
+  };
+  $('#gpxInfo').textContent = `${name} : ${kind}, ${pts.length} point(s). Position ${fmtPos(pos.lat, pos.lon)}` +
+    (Number.isFinite(pos.course) ? `, cap ${pos.course.toFixed(0)}°` : '') + (pos.time ? ` (relevée ${pos.time.slice(0, 16).replace('T', ' ')} UTC)` : '') + '. Jeu en pause.';
 }
 
 function resetGame(course, keepCourse) {
@@ -656,6 +708,15 @@ function draw() {
     });
     const e = P[P.length - 1], [ex, ey] = toScreen(e.lat, e.lon);
     ctx.font = 'bold 11px system-ui'; ctx.fillText(`★ Route idéale · ${R.reached ? 'arrivée ' + fmtLocal(R.eta_unix) : 'non atteinte'}`, ex + 10, ey - 10);
+  }
+
+  // route importée d'un GPX
+  if (S.gpxRoute && S.gpxRoute.length > 1) {
+    ctx.setLineDash([7, 5]); ctx.lineWidth = 2; ctx.strokeStyle = '#7fb2ff'; ctx.beginPath();
+    S.gpxRoute.forEach(([la, lo], i) => { const [x, y] = toScreen(la, lo); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke(); ctx.setLineDash([]);
+    const [la, lo] = S.gpxRoute[S.gpxRoute.length - 1], [x, y] = toScreen(la, lo);
+    ctx.fillStyle = '#7fb2ff'; ctx.font = 'bold 11px system-ui'; ctx.fillText('Route GPX', x + 8, y + 4);
   }
 
   // points de routage : ordre de passage (boat → 1 → 2 … → arrivée), puis marqueurs numérotés
@@ -813,6 +874,13 @@ function drawCompass(sn) {
   c.beginPath(); c.moveTo(...pt(h, L + 6)); c.lineTo(...pt(h, Rd - 2)); c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.9)'; c.stroke();
   tri(h, '#ffffff', 24, Rd + 4);
 
+  // cap proposé (en attente de validation) : curseur et ligne jaunes
+  if (S.pend) {
+    const ph = pendHeading(sn);
+    c.setLineDash([10, 8]); c.beginPath(); c.moveTo(...pt(ph, L + 6)); c.lineTo(...pt(ph, Rd - 2)); c.lineWidth = 4; c.strokeStyle = '#f6e05e'; c.stroke(); c.setLineDash([]);
+    tri(ph, '#f6e05e', 32, Rd + 4);
+  }
+
   // relèvement du prochain point (point de routage actif, sinon arrivée)
   const nx = activeWps()[0] || S.info.finish;
   const brg = bearingDeg(sn.lat, sn.lon, nx.lat, nx.lon), [bx, by] = pt(brg, Rd - 16);
@@ -837,6 +905,7 @@ function updateUi() {
   $('#cmModeHdg').classList.toggle('on', S.pilotT[0] === 0);
   $('#cmModeTwa').classList.toggle('on', S.pilotT[0] === 1);
   updateWpDistances();
+  renderPend();
   $('#clockUtc').textContent = fmtUtc(sn.now);
   $('#clockLocal').textContent = 'local ' + fmtLocal(sn.now);
   $('#elapsed').textContent = `J+${Math.floor(sn.elapsed_s / 86400)} ${pad2(Math.floor((sn.elapsed_s % 86400) / 3600))}:${pad2(Math.floor((sn.elapsed_s % 3600) / 60))}`;
