@@ -132,3 +132,38 @@ ol#wpList li{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-
 ol#wpList .p{grid-column:2 / 4;grid-row:2;padding:0;flex-basis:auto}
 ol#wpList .act{grid-column:1 / 4;grid-row:3;display:flex;gap:4px;margin-top:2px}
 ol#wpList .act button.rt{flex:1}
+
+/* ---- Zones colorées : une couleur par fonction, pour retrouver d'un coup d'œil où l'on est ---- */
+[data-zone=nav]{--z:#4d8dff}      /* navigation : compas, bateau, pilote */
+[data-zone=route]{--z:#fbbf24}    /* routage : cibles, routages, ordre au bateau */
+[data-zone=data]{--z:#a3e635}     /* données : vent, polaire, GPX */
+[data-zone=course]{--z:#fb7185}   /* parcours et position de départ */
+[data-zone=save]{--z:#a78bfa}     /* sauvegarde de la partie */
+[data-zone=boat]{--z:#2dd4bf}     /* mon bateau et sa performance */
+[data-zone=rank]{--z:#fb923c}     /* classement */
+[data-zone=acct]{--z:#e879f9}     /* compte / connexion */
+aside section[data-zone]{
+  position:relative;margin:16px 0 8px;padding:12px 10px 10px;border:1px solid color-mix(in srgb,var(--z) 38%,var(--line));
+  border-left:4px solid var(--z);border-radius:8px;background:color-mix(in srgb,var(--z) 7%,var(--panel));
+}
+aside section[data-zone]:first-child{margin-top:14px}
+aside section[data-zone]::before{
+  content:attr(data-label);position:absolute;top:-8px;left:10px;padding:1px 8px;border-radius:9px;
+  background:var(--z);color:#06101f;font-size:9.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;line-height:14px;
+}
+aside section[data-zone] h3{color:var(--z)}
+aside section[data-zone] .step{background:var(--z)}
+aside section[data-zone] button:hover,aside section[data-zone] .file:hover{border-color:var(--z)}
+aside section[data-zone] input:focus,aside section[data-zone] select:focus{outline:1px solid var(--z);border-color:var(--z)}
+/* les trois étapes du routage forment un seul bloc : l'étiquette n'apparaît que sur la première, les cartes se touchent */
+#rtSec::before,#orderSec::before{display:none}
+#wpSec{margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0}
+#rtSec{margin:0;border-radius:0;border-top-color:transparent}
+#orderSec{margin-top:0;border-top-left-radius:0;border-top-right-radius:0;border-top-color:transparent}
+header .acct[data-zone]{padding:3px 10px;border:1px solid color-mix(in srgb,var(--z) 60%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--z) 10%,var(--panel))}
+header .acct[data-zone]::before{content:attr(data-label);color:var(--z);font-size:9.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}
+/* boutons de la carte : couleur de la fonction qu'ils commandent */
+#tgWind,#tgFlow{border-color:#4d8dff}
+#tgIso,#tgRoute,#btnAddWp{border-color:#fbbf24}
+#tgWind.on,#tgFlow.on{background:rgba(77,141,255,.28)}
+#tgIso.on,#tgRoute.on{background:rgba(251,191,36,.24)}

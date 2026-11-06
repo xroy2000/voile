@@ -57,6 +57,9 @@ Le panneau de droite suit le parcours de Virtual Regatta en trois étapes :
 
 Les limites par offre sont rassemblées dans `PLANS` (`web/main.js`) : en mode **admin** tout est ouvert ; une offre payante pourra limiter les cibles, les routages gardés ou le routage par cible.
 
+## Zones colorées
+Chaque fonction a sa couleur (cartes à liseré et étiquette) : **bleu** navigation (compas, bateau, pilote), **jaune** routage (cibles, routages, ordre au bateau), **vert citron** données et GPX, **rose** parcours et départ, **violet** sauvegarde, **turquoise** mon bateau et performance, **orange** classement, **magenta** compte. Les boutons de la carte reprennent la couleur de leur fonction (vent en bleu, route et isochrones en jaune). Les couleurs sont des variables `--z` par `data-zone` dans `web/style.css`.
+
 ## Importer ma position (GPX)
 Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau repart de là **à l'heure du fichier**, rattrape le temps réel en suivant la route idéale,
 et la route du fichier est tracée en pointillés bleus (« Route GPX »).

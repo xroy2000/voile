@@ -21,12 +21,12 @@
   </div>
   <div id="modeBadge" class="badge good">● TEMPS RÉEL</div>
   <div id="windBadge" class="badge"></div>
-  <div id="acct" class="acct hidden"></div>
+  <div id="acct" class="acct hidden" data-zone="acct" data-label="Compte"></div>
 </header>
 
 <main>
   <aside id="left">
-    <section id="compassSec">
+    <section data-zone="nav" data-label="Navigation" id="compassSec">
       <h3>Compas</h3>
       <div id="compassWrap"><canvas id="compassCv" width="560" height="560"></canvas></div>
       <div class="row compassBtns">
@@ -45,7 +45,7 @@
       <div class="muted small">Clique ou fais glisser sur le compas pour proposer un cap (ou un TWA en mode TWA), puis valide. <span class="kc kc-red">bâbord</span> <span class="kc kc-green">tribord</span></div>
     </section>
 
-    <section>
+    <section data-zone="nav" data-label="Navigation">
       <h3>Bateau <span id="grounded" class="alert hidden">ÉCHOUÉ</span><span id="finished" class="ok hidden">ARRIVÉ</span></h3>
       <div class="grid2">
         <div><label>Vitesse</label><div class="val"><span id="vSpeed">—</span> <small>nds</small></div></div>
@@ -64,7 +64,7 @@
       <div class="muted small" id="polarInfo"></div>
     </section>
 
-    <section>
+    <section data-zone="nav" data-label="Navigation">
       <h3>Pilote automatique</h3>
       <div class="row"><label>Cap</label><input id="inHeading" type="number" step="1" min="0" max="359" value="240"><button id="btnHeading">Appliquer</button></div>
       <div class="row"><label>TWA</label><input id="inTwa" type="number" step="1" min="-180" max="180" value="-110"><button id="btnTwa">Appliquer</button></div>
@@ -77,7 +77,7 @@
       <div class="muted small">TWA : + vent par tribord, − par bâbord.</div>
     </section>
 
-    <section>
+    <section data-zone="data" data-label="Données · GPX">
       <h3>Données</h3>
       <div class="row wrap"><label class="file">Vent (wind.bin)<input id="fileWind" type="file" accept=".bin"></label>
       <label class="file">Polaire (.csv / .pol)<input id="filePolar" type="file" accept=".csv,.pol,.txt,.tsv"></label></div>
@@ -88,7 +88,7 @@
       <div id="dataErr" class="alert small hidden"></div>
     </section>
 
-    <section>
+    <section data-zone="course" data-label="Parcours">
       <h3>Parcours / position de départ</h3>
       <div class="row"><label>Départ lat</label><input id="inSLat" type="text" placeholder="39°N 02'19&quot;"></div>
       <div class="row"><label>Départ lon</label><input id="inSLon" type="text" placeholder="41°W 40'26&quot;"></div>
@@ -120,7 +120,7 @@
   </div>
 
   <aside id="right">
-    <section>
+    <section data-zone="save" data-label="Sauvegarde">
       <h3>Partie</h3>
       <div class="row wrap">
         <button id="btnSave" title="Enregistre maintenant dans ce navigateur">💾 Sauvegarder</button>
@@ -131,7 +131,7 @@
       <label class="check"><input id="chkSave" type="checkbox" checked> Sauvegarde automatique (toutes les 5 s) et reprise au rechargement</label>
       <div id="saveInfo" class="muted small">—</div>
     </section>
-    <section id="wpSec">
+    <section data-zone="route" data-label="Routage" id="wpSec">
       <h3><span class="step">1</span> Cibles <small class="muted">(waypoints)</small> <span id="planBadge" class="plan" title="Offre : en mode admin tout est ouvert et sans limite. Plus tard, l’offre viendra du compte du joueur.">Admin · accès libre</span></h3>
       <div class="row wrap">
         <button id="btnWpAdd" title="Puis clique sur la carte (plusieurs fois de suite)">+ Sur la carte</button>
@@ -144,7 +144,7 @@
       <div id="wpHint" class="muted small">Pose des cibles sur la carte (glisse-les pour les déplacer), saisis leurs coordonnées ou ajoute-en au bateau. « Routage » calcule le trajet jusqu’à la cible ; double-clique sur un nom pour le changer.</div>
       <div class="row"><label for="wpRadius" style="width:auto">Cible atteinte à</label><input id="wpRadius" type="number" min="0.5" max="20" step="0.5" value="2" class="tiny"><span class="muted small">nm</span></div>
     </section>
-    <section id="rtSec">
+    <section data-zone="route" data-label="Routage" id="rtSec">
       <h3><span class="step">2</span> Routages</h3>
       <div class="row"><label>Qualité</label>
         <select id="selQuality">
@@ -168,7 +168,7 @@
         <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>
       </details>
     </section>
-    <section id="orderSec">
+    <section data-zone="route" data-label="Routage" id="orderSec">
       <h3><span class="step">3</span> Ordre au bateau</h3>
       <div id="orderNow" class="orderNow">—</div>
       <div class="row wrap">
@@ -179,7 +179,7 @@
       <div id="frozenBar" class="frozen hidden"><span id="frozenTxt"></span> <button id="btnUnfreeze" title="Reprend le recalcul automatique de la route active">Reprendre le recalcul auto</button></div>
       <label class="check"><input id="chkAlign" type="checkbox" checked> Le bateau s’aligne sur la route active (suivi automatique)</label>
     </section>
-    <section>
+    <section data-zone="boat" data-label="Bateau">
       <h3>Mon bateau</h3>
       <canvas id="boatPrev" width="256" height="256"></canvas>
       <div class="boatTypes" id="boatTypes"></div>
@@ -197,7 +197,7 @@
       <div id="perfInfo" class="muted small">Polaire générique : règle un pourcentage pour coller à la vitesse réelle de ton bateau.</div>
       <div class="row wrap"><button id="bReset">Par défaut</button></div>
     </section>
-    <section>
+    <section data-zone="rank" data-label="Course">
       <h3>Classement</h3>
       <ol id="board"></ol>
     </section>
