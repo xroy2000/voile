@@ -90,3 +90,9 @@ ol#wpList button{padding:0 6px;line-height:20px}
 .row .col{flex:1;display:flex;flex-direction:column;gap:2px}
 input[type=color]{width:100%;height:26px;padding:0;border:1px solid var(--line);border-radius:5px;background:#030812;cursor:pointer}
 input[type=range]{flex:1;accent-color:var(--accent)}
+
+body:not(.sim) #speedBtns,body:not(.sim) #btnPause,body:not(.sim) #elapsed{display:none}
+#simBanner{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(246,173,85,.95);color:#1a1205;padding:6px 12px;border-radius:8px;font-weight:600;display:flex;gap:10px;align-items:center;white-space:nowrap;z-index:4}
+#simBanner button{background:#1a1205;color:#f6ad55;border-color:#1a1205}
+#btnSim{white-space:nowrap}
+body.sim #btnSim{background:#7a4a12;border-color:var(--warn)}

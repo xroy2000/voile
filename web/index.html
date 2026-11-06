@@ -17,7 +17,9 @@
     <button id="btnPause" title="Pause / reprise (espace)">⏸</button>
     <span id="speedBtns"></span>
     <span id="elapsed" class="muted small"></span>
+    <button id="btnSim" title="Accélère le temps à partir de ta position réelle, sans la modifier">▶ Simuler la route</button>
   </div>
+  <div id="modeBadge" class="badge good">● TEMPS RÉEL</div>
   <div id="windBadge" class="badge"></div>
 </header>
 
@@ -80,6 +82,7 @@
       <label class="file">Polaire (.csv / .pol)<input id="filePolar" type="file" accept=".csv,.pol,.txt,.tsv"></label></div>
       <div class="row wrap"><label class="file" title="Place le bateau sur la position du fichier GPX (piste : dernier point ; route ou waypoint : premier point)">Importer GPX (position)<input id="fileGpx" type="file" accept=".gpx,.xml"></label></div>
       <div class="muted small" id="gpxInfo"></div>
+      <div class="row wrap"><button id="btnGpxFollow" class="hidden" title="Le pilote suit les points datés du fichier GPX">Suivre la route GPX</button></div>
       <div class="muted small" id="dataInfo"></div>
       <div id="dataErr" class="alert small hidden"></div>
     </section>
@@ -110,6 +113,7 @@
     <div id="legend"></div>
     <div id="hover">—</div>
     <div id="mapMsg" class="hidden"></div>
+    <div id="simBanner" class="hidden">SIMULATION · ta position réelle n’est pas modifiée <button id="btnSimExit">■ Revenir au réel</button></div>
     <div id="loading"><div><div class="spin"></div><div id="loadingTxt">Chargement…</div></div></div>
   </div>
 
@@ -148,7 +152,8 @@
         <button id="btnFollow">Suivre la route idéale</button>
         <button id="btnCsv" title="Exporter les ordres de pilote">CSV</button>
       </div>
-      <label class="check"><input id="chkAuto" type="checkbox"> Recalcul et suivi automatiques toutes les <input id="inAutoH" type="number" min="1" max="48" value="6" class="tiny"> h de jeu</label>
+      <label class="check"><input id="chkAlign" type="checkbox" checked> Le bateau s’aligne sur la route idéale (suivi automatique)</label>
+      <label class="check"><input id="chkAuto" type="checkbox" checked> Recalcul automatique de la route toutes les <input id="inAutoH" type="number" min="1" max="48" value="3" class="tiny"> h de jeu</label>
       <div id="routeStatus" class="muted small">Aucune route calculée.</div>
       <div id="routeSummary" class="summary hidden"></div>
       <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>

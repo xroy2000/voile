@@ -181,7 +181,7 @@ const S = {
   layers: { wind: true, iso: true, route: true },
   follow: false, armPoint: false, waypoint: null,
   wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
-  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null,
+  pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null, simMode: false, real: null, align: true, gpxPts: null, hoverPx: null,
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
@@ -195,12 +195,14 @@ const ctx = canvas.getContext('2d');
 // ------------------------------------------------------------------ sauvegarde de la partie
 const SAVE_KEY = 'voile.save';
 function buildSave() {
-  const i = S.info;
+  const i = S.info, R = S.simMode && S.real ? S.real : null; // en simulation, on sauvegarde l'état réel
+  const route = R ? R.route : S.route;
   return {
-    v: 1, savedAt: Date.now(), game: S.sim.export_state(),
+    v: 2, savedAt: Date.now(), game: R ? R.game : S.sim.export_state(),
     course: { sLat: i.start.lat, sLon: i.start.lon, fLat: i.finish.lat, fLon: i.finish.lon, startUnix: i.start_unix },
-    windTmin: i.t_min, pilot: S.pilotT, scale: S.scale, running: S.running,
-    wps: S.wps, seq: S.seq, route: S.route ? { ...S.route, isochrones: [] } : null, gpxRoute: S.gpxRoute || null, cmMode: S.cmMode,
+    windTmin: i.t_min, pilot: R ? R.pilot : S.pilotT, align: R ? R.align : S.align,
+    wps: R ? R.wps : S.wps, seq: R ? R.seq : S.seq, route: route ? { ...route, isochrones: [] } : null,
+    gpxPts: R ? R.gpxPts : S.gpxPts, cmMode: S.cmMode,
   };
 }
 const hhmmss = (ms) => new Date(ms).toLocaleTimeString('fr-FR');
@@ -208,32 +210,39 @@ function saveNow(auto) {
   try {
     const sv = buildSave();
     localStorage.setItem(SAVE_KEY, JSON.stringify(sv));
-    $('#saveInfo').textContent = `${auto ? 'Sauvegarde auto' : 'Sauvegardé'} à ${hhmmss(sv.savedAt)} · jeu au ${fmtLocal(S.snap.now)}`;
+    $('#saveInfo').textContent = `${auto ? 'Sauvegarde auto' : 'Sauvegardé'} à ${hhmmss(sv.savedAt)} · ` + (S.simMode ? 'état réel conservé (simulation en cours)' : `jeu au ${fmtLocal(S.snap.now)}`);
     return sv;
   } catch (e) { $('#saveInfo').textContent = 'Sauvegarde impossible : ' + (e.message || e); return null; }
 }
 function readSave() {
-  try { const sv = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return sv && sv.v === 1 ? sv : null; } catch { return null; }
+  try { const sv = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return sv && (sv.v === 1 || sv.v === 2) ? sv : null; } catch { return null; }
 }
-/** Reprend une partie : même parcours, état du bateau et des adversaires, pilote, route idéale, points de routage et route GPX. */
-function restoreGame(sv, label) {
-  setLoading('Restauration de la partie…');
-  S.routeBusy = false; $('#btnRoute').disabled = false; S.currentRouteId = -1;
-  createSim(sv.course);
-  S.sim.import_state(typeof sv.game === 'string' ? sv.game : JSON.stringify(sv.game));
-  S.info = JSON.parse(S.sim.info()); S.snap = JSON.parse(S.sim.snapshot());
-  S.route = sv.route || null; S.wps = sv.wps || []; S.seq = !!sv.seq; S.gpxRoute = sv.gpxRoute || null; S.cmMode = sv.cmMode || 'hdg';
-  const [k, a, b] = sv.pilot || [0, S.snap.heading, 0];
+/** Applique le mode de pilotage sauvegardé : [type, a, b] (voir `pilot_target`). */
+function applyPilot(pilot, route) {
+  const [k, a, b] = pilot;
   if (k === 0) S.sim.set_heading(a);
   else if (k === 1) S.sim.set_twa(a);
   else if (k === 2) S.sim.set_vmg(true);
   else if (k === 3) S.sim.set_vmg(false);
   else if (k === 4) S.sim.set_waypoint(a, b);
-  else if (k === 5) { if (!(S.route && S.sim.set_route_flat(flatRoute(S.route)) && S.sim.follow_route())) S.sim.set_waypoint_finish(); }
-  S.afterReady = () => { S.scale = sv.scale || 600; S.running = !!sv.running; syncSpeedBtns(); };
+  else if (k === 5) { if (!(route && S.sim.set_route_flat(flatRoute(route)) && S.sim.follow_route())) S.sim.set_waypoint_finish(); }
+}
+/** Reprend une partie : même parcours, état du bateau et des adversaires, pilote, route idéale, points de routage et route GPX.
+ *  Le temps de jeu est le temps réel : le bateau rattrape ensuite l'heure écoulée depuis la sauvegarde avec son pilote. */
+function restoreGame(sv, label) {
+  const g = JSON.parse(typeof sv.game === 'string' ? sv.game : JSON.stringify(sv.game));
+  if (g.now > Date.now() / 1000 + 120) throw new Error('sauvegarde datée dans le futur (ancienne simulation accélérée)');
+  setLoading('Restauration de la partie…');
+  S.routeBusy = false; $('#btnRoute').disabled = false; S.currentRouteId = -1;
+  createSim(sv.course);
+  S.sim.import_state(JSON.stringify(g));
+  S.info = JSON.parse(S.sim.info()); S.snap = JSON.parse(S.sim.snapshot());
+  S.route = sv.route || null; S.wps = sv.wps || []; S.seq = !!sv.seq; S.align = sv.align !== false; S.cmMode = sv.cmMode || 'hdg';
+  setGpxPts(sv.gpxPts || null);
+  applyPilot(sv.pilot || [0, S.snap.heading, 0], S.route);
   startWorker(sv.course);
-  renderRoute(); renderWpList();
-  let note = `${label || 'Partie restaurée'} (sauvegardée à ${hhmmss(sv.savedAt)}, jeu au ${fmtLocal(S.snap.now)}).`;
+  renderRoute(); renderWpList(); syncAlignUi(); renderGpxBtn();
+  let note = `${label || 'Partie restaurée'} (sauvegardée à ${hhmmss(sv.savedAt)}, jeu au ${fmtLocal(S.snap.now)} : rattrapage du temps réel en cours).`;
   if (sv.windTmin && S.info.t_min && Math.abs(sv.windTmin - S.info.t_min) > 1) note += ' ⚠ Le vent chargé n’est pas celui de la sauvegarde.';
   $('#saveInfo').textContent = note;
   fitView();
@@ -255,7 +264,7 @@ function bindSaveUi() {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
       const sv = JSON.parse(await f.text());
-      if (sv.v !== 1 || !sv.game || !sv.course) throw new Error('ce fichier n’est pas une sauvegarde Voile');
+      if (![1, 2].includes(sv.v) || !sv.game || !sv.course) throw new Error('ce fichier n’est pas une sauvegarde Voile');
       restoreGame(sv, `Partie chargée (${f.name})`);
     } catch (err) { showDataErr('Chargement : ' + String(err.message || err)); }
   };
@@ -290,7 +299,7 @@ async function boot() {
     bindSaveUi();
     createSim(null);
     const sv = readSave();
-    if (sv) { try { restoreGame(sv, 'Partie reprise'); } catch (e) { console.error(e); try { localStorage.removeItem(SAVE_KEY); } catch { /* ignoré */ } createSim(null); startWorker(); } }
+    if (sv) { try { restoreGame(sv, 'Partie reprise'); } catch (e) { console.error(e); try { localStorage.removeItem(SAVE_KEY); } catch { /* ignoré */ } createSim(null); startWorker(); $('#saveInfo').textContent = 'Ancienne sauvegarde ignorée : ' + (e.message || e); } }
     resize();
     fitView();
     setLoading(null);
@@ -340,9 +349,9 @@ function createSim(course) {
   }
   S.info = JSON.parse(S.sim.info());
   S.snap = JSON.parse(S.sim.snapshot());
-  S.route = null; S.waypoint = null; S.ready = false; S.running = false;
+  S.route = null; S.waypoint = null; S.ready = false; S.running = false; S.simMode = false; S.real = null; S.align = true; S.gpxPts = null;
   S.lastAutoAt = -1e18;
-  S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false; S.pend = null; S.gpxRoute = null; renderPend();
+  S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false; S.pend = null; S.gpxRoute = null; renderPend(); setMode(); syncAlignUi(); renderGpxBtn();
   $('#courseName').textContent = '';
   renderWpList();
   renderRoute();
@@ -381,10 +390,14 @@ function setPend(mode, v) {
 function cancelPend() { S.pend = null; renderPend(); }
 function applyPend() {
   if (!S.pend) return;
-  S.seq = false;
+  manual();
   if (S.pend.mode === 'hdg') S.sim.set_heading(S.pend.v); else S.sim.set_twa(S.pend.v);
   S.pend = null; renderPend();
 }
+/** Une commande manuelle de pilotage coupe l'alignement automatique sur la route idéale. */
+function manual() { S.seq = false; S.align = false; syncAlignUi(); }
+function syncAlignUi() { const c = $('#chkAlign'); if (c) c.checked = S.align; }
+
 function renderPend() {
   const box = $('#cmConfirm');
   box.classList.toggle('hidden', !S.pend);
@@ -454,6 +467,34 @@ function hitWp(px, py) {
   return -1;
 }
 
+// ------------------------------------------------------------------ temps réel / simulation
+function setMode() {
+  document.body.classList.toggle('sim', S.simMode);
+  const b = $('#modeBadge');
+  b.className = 'badge ' + (S.simMode ? 'warn' : 'good');
+  b.textContent = S.simMode ? 'SIMULATION' : '● TEMPS RÉEL';
+  $('#btnSim').textContent = S.simMode ? '■ Revenir au réel' : '▶ Simuler la route';
+  $('#simBanner').classList.toggle('hidden', !S.simMode);
+  syncSpeedBtns();
+}
+/** Simulation : le temps s'accélère à partir de l'état réel, qui est mis de côté (et sauvegardé tel quel). */
+function enterSim() {
+  if (S.simMode || !S.ready) return;
+  S.real = { game: S.sim.export_state(), pilot: [...S.pilotT], align: S.align, wps: JSON.parse(JSON.stringify(S.wps)), seq: S.seq, route: S.route, gpxPts: S.gpxPts };
+  S.simMode = true; S.running = true; S.scale = 3600; S.pend = null; renderPend(); setMode();
+}
+/** Retour au réel : on restaure l'état mis de côté ; l'horloge réelle fait ensuite avancer le bateau avec son pilote réel. */
+function exitSim() {
+  if (!S.simMode || !S.real) return;
+  const R = S.real;
+  S.sim.import_state(R.game);
+  S.simMode = false; S.real = null; S.primed = false; S.prevPos = null; S.pend = null;
+  S.wps = R.wps; S.seq = R.seq; S.align = R.align; S.route = R.route; setGpxPts(R.gpxPts);
+  S.snap = JSON.parse(S.sim.snapshot());
+  applyPilot(R.pilot, S.route);
+  renderPend(); renderRoute(); renderWpList(); syncAlignUi(); renderGpxBtn(); setMode();
+}
+
 // ------------------------------------------------------------------ routeur
 function requestRoute({ ai = false, q, lat, lon, t0, auto = false, follow = false }) {
   if (S.routeBusy && !ai) return;
@@ -476,18 +517,21 @@ function onRoute(m) {
   const r = JSON.parse(m.json);
   if (m.id === 'ai') {
     S.sim.set_ai_route_flat(flatRoute(r));
-    S.ready = true; S.running = true; S.scale = 600; syncSpeedBtns();
+    S.ready = true; S.running = true; syncSpeedBtns();
     setLoading(null);
     if (S.afterReady) { const f = S.afterReady; S.afterReady = null; f(); }
-    // route idéale affichée dès le départ (calcul rapide depuis la position de départ)
-    if (!S.route && S.snap.now - S.info.start_unix < 60) { S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now; renderRoute(); }
+    // route idéale estimée dès le départ ; le bateau s'aligne dessus (puis le recalcul automatique la met à jour)
+    if (!S.route) {
+      S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now; renderRoute();
+      if (S.align && S.sim.set_route_flat(flatRoute(r))) S.sim.follow_route();
+    }
     return;
   }
   if (m.id !== S.currentRouteId) return; // résultat périmé (partie réinitialisée)
   S.routeBusy = false;
   $('#btnRoute').disabled = false;
   S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now;
-  if (S.sim.set_route_flat(flatRoute(r)) && (S.routeAuto || S.followAfter || S.routeFollow)) { S.sim.follow_route(); S.seq = false; }
+  if (S.sim.set_route_flat(flatRoute(r)) && (S.align || S.followAfter)) { S.sim.follow_route(); S.seq = false; }
   S.followAfter = false; S.routeFollow = false;
   renderRoute();
   if (S.reroutePending) scheduleReroute();
@@ -567,13 +611,15 @@ function showMapMsg() {
 }
 
 function bindUi() {
-  $('#btnPause').onclick = () => { S.running = !S.running; syncSpeedBtns(); };
+  $('#btnPause').onclick = () => { if (!S.simMode) return; S.running = !S.running; syncSpeedBtns(); };
+  $('#btnSim').onclick = () => (S.simMode ? exitSim() : enterSim());
+  $('#btnSimExit').onclick = exitSim;
   addEventListener('keydown', (e) => { if (e.code === 'Space' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('#btnPause').click(); } });
-  $('#btnHeading').onclick = () => { S.seq = false; S.sim.set_heading(+$('#inHeading').value); };
-  $('#btnTwa').onclick = () => { S.seq = false; S.sim.set_twa(+$('#inTwa').value); };
-  $('#btnVmgUp').onclick = () => { S.seq = false; S.sim.set_vmg(true); };
-  $('#btnVmgDown').onclick = () => { S.seq = false; S.sim.set_vmg(false); };
-  $('#btnFinish').onclick = () => { S.seq = false; S.waypoint = null; S.sim.set_waypoint_finish(); };
+  $('#btnHeading').onclick = () => { manual(); S.sim.set_heading(+$('#inHeading').value); };
+  $('#btnTwa').onclick = () => { manual(); S.sim.set_twa(+$('#inTwa').value); };
+  $('#btnVmgUp').onclick = () => { manual(); S.sim.set_vmg(true); };
+  $('#btnVmgDown').onclick = () => { manual(); S.sim.set_vmg(false); };
+  $('#btnFinish').onclick = () => { manual(); S.waypoint = null; S.sim.set_waypoint_finish(); };
   const syncArm = () => {
     $('#btnPoint').classList.toggle('on', S.armPoint); $('#btnWpAdd').classList.toggle('on', S.armWp); $('#btnAddWp').classList.toggle('on', S.armWp);
     canvas.classList.toggle('arm', S.armPoint || S.armWp);
@@ -585,6 +631,7 @@ function bindUi() {
   $('#btnWpClear').onclick = () => { S.wps = []; if (S.seq) { S.sim.set_waypoint_finish(); S.seq = false; } renderWpList(); scheduleReroute(); };
   $('#btnWpGo').onclick = () => {
     const n = activeWps()[0];
+    manual();
     if (!n) { S.sim.set_waypoint_finish(); return; }
     S.seq = true; S.waypoint = null; S.sim.set_waypoint(n.lat, n.lon);
   };
@@ -633,10 +680,13 @@ function bindUi() {
     const s = S.snap;
     requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now });
   };
-  $('#btnFollow').onclick = () => {
+  const alignNow = () => {
+    S.align = true; S.seq = false; syncAlignUi();
     if (S.route && S.sim.set_route_flat(flatRoute(S.route))) S.sim.follow_route();
     else { S.followAfter = true; $('#btnRoute').click(); }
   };
+  $('#chkAlign').onchange = (e) => { if (e.target.checked) alignNow(); else S.align = false; };
+  $('#btnFollow').onclick = alignNow;
   $('#btnCsv').onclick = exportCsv;
 
   $('#btnReset').onclick = () => {
@@ -652,6 +702,11 @@ function bindUi() {
   $('#fileGpx').onchange = async (e) => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try { importGpx(await f.text(), f.name); } catch (err) { $('#gpxInfo').textContent = ''; showDataErr('GPX : ' + String(err.message || err)); }
+  };
+  $('#btnGpxFollow').onclick = () => {
+    const flat = gpxFlat();
+    if (flat.length >= 16 && S.sim.set_route_flat(flat) && S.sim.follow_route()) manual();
+    else showDataErr('Route GPX : pas assez de points datés dans le futur.');
   };
   $('#fileWind').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -681,7 +736,7 @@ function bindUi() {
   });
   canvas.addEventListener('pointermove', (e) => {
     const [px, py] = rel(e);
-    S.hoverLL = screenToLL(px, py);
+    S.hoverLL = screenToLL(px, py); S.hoverPx = [px, py];
     if (drag) {
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
@@ -699,7 +754,7 @@ function bindUi() {
         renderWpList(); scheduleReroute();
       } else if (!drag.moved && S.armWp) addWp(ll.lat, ll.lon); // reste armé : on peut poser plusieurs points
       else if (!drag.moved && S.armPoint) {
-        S.seq = false; S.waypoint = ll; S.sim.set_waypoint(ll.lat, ll.lon);
+        manual(); S.waypoint = ll; S.sim.set_waypoint(ll.lat, ll.lon);
         S.armPoint = false; S.syncArm();
       }
     }
@@ -719,28 +774,41 @@ function bindUi() {
   new ResizeObserver(resize).observe($('#mapwrap'));
 }
 
+function setGpxPts(pts) { S.gpxPts = pts && pts.length > 1 ? pts : null; S.gpxRoute = S.gpxPts ? S.gpxPts.map((p) => [p.lat, p.lon]) : null; }
+function renderGpxBtn() { $('#btnGpxFollow').classList.toggle('hidden', !S.gpxPts); }
+/** Route du GPX au format du pilote : t, lat, lon, cap, TWA, vent, direction, vitesse (le vent vient du modèle chargé). */
+function gpxFlat() {
+  const nowS = S.snap.now, out = [], P = S.gpxPts;
+  P.forEach((p, i) => {
+    if (!Number.isFinite(p.t)) return;
+    const nx = P[i + 1] || p, hd = Number.isFinite(p.course) ? p.course : bearingDeg(p.lat, p.lon, nx.lat, nx.lon);
+    const w = S.sim.wind_at(p.lat, p.lon, (p.t - nowS) / 3600);
+    out.push(p.t, p.lat, p.lon, hd, n180(w[1] - hd), w[0], w[1], Number.isFinite(p.speed) ? p.speed : 10);
+  });
+  return new Float64Array(out);
+}
+
 /** Place le bateau sur la position d'un GPX : piste (trk) = dernier point, route (rte) ou waypoint = premier point.
- *  Garde l'arrivée actuelle, met le jeu en pause, reprend le cap du fichier s'il y en a un, et affiche la route du fichier. */
+ *  Le jeu repart à l'heure du fichier et rattrape le temps réel en suivant la route idéale ; la route du fichier est tracée. */
 function importGpx(text, name) {
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('fichier illisible');
-  const read = (tag) => [...doc.getElementsByTagName(tag)].map((el) => ({
-    lat: parseFloat(el.getAttribute('lat')), lon: parseFloat(el.getAttribute('lon')),
-    course: parseFloat(el.getElementsByTagName('course')[0]?.textContent), time: el.getElementsByTagName('time')[0]?.textContent,
-  })).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  const num = (el, tag) => parseFloat(el.getElementsByTagName(tag)[0]?.textContent);
+  const read = (tag) => [...doc.getElementsByTagName(tag)].map((el) => {
+    const time = el.getElementsByTagName('time')[0]?.textContent;
+    return { lat: parseFloat(el.getAttribute('lat')), lon: parseFloat(el.getAttribute('lon')), course: num(el, 'course'), speed: num(el, 'speed'), time, t: time ? Date.parse(time) / 1000 : NaN };
+  }).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
   let kind = 'piste', pts = read('trkpt'), pos;
   if (pts.length) pos = pts[pts.length - 1];
   else { kind = 'route'; pts = read('rtept'); if (!pts.length) { kind = 'waypoint'; pts = read('wpt'); } pos = pts[0]; }
   if (!pos) throw new Error('aucun point trouvé');
   const fin = S.info.finish;
-  resetGame({ sLat: pos.lat, sLon: pos.lon, fLat: fin.lat, fLon: fin.lon });
-  S.afterReady = () => {
-    S.running = false; syncSpeedBtns();
-    if (Number.isFinite(pos.course)) S.sim.set_heading(pos.course);
-    if (pts.length > 1) S.gpxRoute = pts.map((p) => [p.lat, p.lon]);
-  };
+  const startUnix = Number.isFinite(pos.t) && pos.t <= Date.now() / 1000 ? pos.t : undefined;
+  resetGame({ sLat: pos.lat, sLon: pos.lon, fLat: fin.lat, fLon: fin.lon, startUnix });
+  S.afterReady = () => { setGpxPts(pts); renderGpxBtn(); };
   $('#gpxInfo').textContent = `${name} : ${kind}, ${pts.length} point(s). Position ${fmtPos(pos.lat, pos.lon)}` +
-    (Number.isFinite(pos.course) ? `, cap ${pos.course.toFixed(0)}°` : '') + (pos.time ? ` (relevée ${pos.time.slice(0, 16).replace('T', ' ')} UTC)` : '') + '. Jeu en pause.';
+    (pos.time ? ` relevée ${pos.time.slice(0, 16).replace('T', ' ')} UTC` : '') +
+    '. Le bateau repart de là à cette heure, rattrape le temps réel et s’aligne sur la route idéale.';
 }
 
 function resetGame(course, keepCourse) {
@@ -886,8 +954,26 @@ function draw() {
       const day = Math.floor((p.t - t0) / 86400);
       if (day > lastDay) { lastDay = day; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.3); ctx.fill(); ctx.fillText(`J+${day}`, x + 6, y - 5); }
     });
+    // points estimés du routage : un point par pas, l'heure toutes les 6 h, losange à chaque virement / empannage
+    let lab = [-1e9, -1e9];
+    P.forEach((p, i) => {
+      if (i === 0) return;
+      const [x, y] = toScreen(p.lat, p.lon), h = (p.t - t0) / 3600, six = Math.abs(h / 6 - Math.round(h / 6)) < 0.01;
+      ctx.beginPath(); ctx.arc(x, y, six ? 3.2 : 1.8, 0, 6.3); ctx.fillStyle = six ? '#fff7b0' : 'rgba(246,224,94,.85)'; ctx.fill();
+      if (six && S.view.z > 1200 && Math.hypot(x - lab[0], y - lab[1]) > 48) {
+        ctx.fillStyle = '#fff7b0'; ctx.font = '10px system-ui';
+        ctx.fillText(new Date(p.t * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), x + 5, y + 13); lab = [x, y];
+      }
+      const q = P[i - 1];
+      if (i > 1 && p.twa !== 0 && q.twa !== 0 && Math.sign(p.twa) !== Math.sign(q.twa)) {
+        const gybe = (Math.abs(p.twa) + Math.abs(q.twa)) / 2 > 90;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4); ctx.fillStyle = gybe ? '#68d391' : '#fc8181'; ctx.strokeStyle = '#0b1b2b'; ctx.lineWidth = 1.5;
+        ctx.fillRect(-4.5, -4.5, 9, 9); ctx.strokeRect(-4.5, -4.5, 9, 9); ctx.restore();
+        if (S.view.z > 3000) { ctx.fillStyle = '#fff'; ctx.font = '10px system-ui'; ctx.fillText(gybe ? 'Empannage' : 'Virement', x + 8, y - 6); }
+      }
+    });
     const e = P[P.length - 1], [ex, ey] = toScreen(e.lat, e.lon);
-    ctx.font = 'bold 11px system-ui'; ctx.fillText(`★ Route idéale · ${R.reached ? 'arrivée ' + fmtLocal(R.eta_unix) : 'non atteinte'}`, ex + 10, ey - 10);
+    ctx.font = 'bold 11px system-ui'; ctx.fillText(`★ Route idéale estimée · ${R.reached ? 'arrivée ' + fmtLocal(R.eta_unix) : 'non atteinte'}`, ex + 10, ey - 10);
   }
 
   // route importée d'un GPX
@@ -943,7 +1029,13 @@ function draw() {
   // survol
   if (S.hoverLL) {
     const wv = S.sim.wind_at(S.hoverLL.lat, S.hoverLL.lon, 0);
-    $('#hover').textContent = `${fmtPos(S.hoverLL.lat, S.hoverLL.lon)}  ·  vent ${wv[0].toFixed(1)} nds de ${wv[1].toFixed(0)}°`;
+    let extra = '';
+    if (R && S.layers.route && S.hoverPx) { // point de la route estimée sous la souris
+      let best = null, bd = 14;
+      for (const p of R.points) { const [x, y] = toScreen(p.lat, p.lon), d = Math.hypot(x - S.hoverPx[0], y - S.hoverPx[1]); if (d < bd) { bd = d; best = p; } }
+      if (best) extra = `  ·  ★ route ${fmtLocal(best.t)} : cap ${best.heading.toFixed(0)}° · TWA ${best.twa >= 0 ? '+' : ''}${best.twa.toFixed(0)}° · vent ${best.tws.toFixed(0)} nds · bateau ${best.speed.toFixed(1)} nds`;
+    }
+    $('#hover').textContent = `${fmtPos(S.hoverLL.lat, S.hoverLL.lon)}  ·  vent ${wv[0].toFixed(1)} nds de ${wv[1].toFixed(0)}°` + extra;
   }
 }
 
@@ -1110,8 +1202,14 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000); last = now;
   try {
-    if (S.ready && S.running) S.sim.tick(dt * S.scale);
-    else if (S.ready && !S.primed) { S.sim.tick(0.01); S.primed = true; } // en pause dès le départ : amorce vent/vitesse pour l'affichage
+    if (S.ready) {
+      if (S.simMode) { if (S.running) S.sim.tick(dt * S.scale); }
+      else { // temps réel : l'horloge du jeu suit l'horloge réelle (rattrape aussi un onglet endormi ou une page fermée)
+        const gap = Date.now() / 1000 - S.snap.now;
+        if (gap > 0.02) S.sim.tick(Math.min(gap, 7 * 86400));
+      }
+      if (!S.primed) { S.sim.tick(0.01); S.primed = true; } // amorce vent/vitesse pour l'affichage
+    }
     S.snap = JSON.parse(S.sim.snapshot());
     S.pilotT = Array.from(S.sim.pilot_target());
     if (S.ready) trackWps(S.snap);

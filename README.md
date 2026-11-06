@@ -15,6 +15,17 @@ Aucun asset, code ou polaire de Virtual Regatta n'est inclus ; rien ne s'injecte
 - **Route idéale** ★ : route du routeur affichée en jaune, recalculée automatiquement quand les points changent
   (tronçon par point, puis arrivée) ; « Suivre la route idéale » engage le pilote dessus.
 
+## Temps réel et simulation
+Le bateau avance **en temps réel** (horloge du jeu = horloge réelle) ; page fermée, il rattrape l'heure écoulée avec son pilote au rechargement.
+Le bouton « ▶ Simuler la route » accélère le temps à partir de l'état réel sans le modifier (la sauvegarde garde l'état réel) ;
+« ■ Revenir au réel » restaure l'état réel.
+
+## Alignement sur le routage
+Par défaut le pilote suit la **route idéale estimée** (routeur à isochrones), recalculée toutes les 3 h (réglable) et à chaque changement de points de routage.
+Tout réglage manuel (compas, TWA, VMG, point) coupe l'alignement ; la case « Le bateau s'aligne sur la route idéale » ou « Suivre la route idéale » le rétablit.
+La route montre ses points estimés, l'heure toutes les 6 h, les virements (rouge) et empannages (vert) ; survole un point pour le détail.
+Après un import GPX, « Suivre la route GPX » fait suivre au pilote les points datés du fichier.
+
 ## Sauvegarde de la partie
 Sauvegarde automatique toutes les 5 s dans le navigateur (case « Partie »), reprise au rechargement : position, cap, vitesse, temps de jeu,
 adversaires, pilote (cap / TWA / VMG / point / route), route idéale, points de routage, route GPX et vitesse du temps.
@@ -25,8 +36,8 @@ Section « Mon bateau » : monocoque IMOCA à foils, trimaran, catamaran ou voil
 voiles affichées ou non. L'icône est utilisée sur la carte et au centre du compas, et sa grand-voile suit le TWA. Réglages mémorisés.
 
 ## Importer ma position (GPX)
-Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau est placé là, le jeu en pause,
-le cap du fichier repris s'il existe, et la route du fichier est tracée en pointillés bleus (« Route GPX »).
+Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau repart de là **à l'heure du fichier**, rattrape le temps réel en suivant la route idéale,
+et la route du fichier est tracée en pointillés bleus (« Route GPX »).
 
 ## Construire
     rustup target add wasm32-unknown-unknown
