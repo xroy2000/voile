@@ -152,6 +152,8 @@
           <option value="1" selected>Standard (≈ 3 s)</option>
           <option value="2">Précis (≈ 10 s)</option>
         </select></div>
+      <div class="row"><label for="rtDelay" style="width:auto">Départ dans</label><input id="rtDelay" type="number" min="0" max="72" step="1" value="0" class="tiny" title="0 = tout de suite. Sinon le routage part de la position prévue du bateau à cette heure."><span class="muted small">h</span></div>
+      <div id="rtStartInfo" class="muted small"></div>
       <div class="row wrap">
         <button id="btnRoute" class="primary" title="Bateau → toutes les cibles dans l’ordre → arrivée">Calculer le routage complet</button>
       </div>

@@ -53,6 +53,8 @@ Le panneau de droite suit le parcours de Virtual Regatta en trois étapes :
 2. **Routages** : « Calculer le routage complet » (bateau → toutes les cibles → arrivée) et chaque routage vers une cible sont gardés dans **Mes routages** (début, arrivée, durée, distance) : case pour l'afficher sur la carte dans sa couleur, renommage, suppression. Ils sont sauvegardés avec la partie.
 3. **Ordre au bateau** : ▶ Suivre un routage (il est alors figé, le recalcul automatique est suspendu), suivre la route active, rallier les cibles en ligne directe, ou aller à l'arrivée. L'ordre en cours est toujours affiché.
 
+**Réglages du routeur** (étape 2) : qualité, recalcul automatique et son intervalle sont mémorisés d'une visite à l'autre. « Départ dans N h » décale le début d'un routage : il part de la position **prévue** du bateau à cette heure sur la route qu'il suit (sinon de sa position actuelle), pour préparer un passage de front ou un empannage à venir.
+
 Les limites par offre sont rassemblées dans `PLANS` (`web/main.js`) : en mode **admin** tout est ouvert ; une offre payante pourra limiter les cibles, les routages gardés ou le routage par cible.
 
 ## Importer ma position (GPX)

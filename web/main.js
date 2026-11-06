@@ -506,6 +506,39 @@ function centerOn(p) {
   S.follow = false; $('#tgFollow').classList.remove('on');
   S.view.cx = mercX(p.lon); S.view.cy = mercY(p.lat);
 }
+/** Départ d'un routage : tout de suite, ou dans `rtDelay` heures depuis la position prévue du bateau sur la route qu'il suit. */
+function routeStart() {
+  const s = S.snap, h = clamp(+$('#rtDelay').value || 0, 0, 72);
+  if (h <= 0) return { lat: s.lat, lon: s.lon, t0: s.now, note: '' };
+  const t = s.now + h * 3600, R = S.route;
+  if (S.pilotT[0] === 5 && R && R.points.length > 1) {
+    const P = R.points;
+    let a = P[P.length - 1], b = a, f = 0;
+    for (let i = 0; i < P.length - 1; i++) if (P[i + 1].t >= t) { a = P[i]; b = P[i + 1]; f = clamp((t - a.t) / Math.max(1, b.t - a.t), 0, 1); break; }
+    return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, t0: t, note: 'position prévue sur la route suivie' };
+  }
+  return { lat: s.lat, lon: s.lon, t0: t, note: 'le bateau ne suit pas de route : départ depuis sa position actuelle' };
+}
+function renderStartInfo() {
+  if (!S.snap) return;
+  const st = routeStart();
+  const t = st.note ? `Départ ${fmtLocal(st.t0)} · ${fmtPos(st.lat, st.lon)} (${st.note})` : '';
+  if ($('#rtStartInfo').textContent !== t) $('#rtStartInfo').textContent = t;
+}
+/** Réglages du routeur gardés d'une visite à l'autre (qualité, recalcul automatique). */
+const ROUTER_KEY = 'voile.router';
+function loadRouterSettings() {
+  try {
+    const o = JSON.parse(localStorage.getItem(ROUTER_KEY) || 'null'); if (!o) return;
+    if (o.q != null) $('#selQuality').value = String(o.q);
+    if (o.auto != null) $('#chkAuto').checked = !!o.auto;
+    if (o.hours) $('#inAutoH').value = String(o.hours);
+  } catch { /* stockage indisponible ou illisible */ }
+}
+function saveRouterSettings() {
+  try { localStorage.setItem(ROUTER_KEY, JSON.stringify({ q: +$('#selQuality').value, auto: $('#chkAuto').checked, hours: +$('#inAutoH').value || 3 })); } catch { /* ignoré */ }
+}
+
 /** Routage du bateau jusqu'à une seule cible (comme « Routage » à côté d'un Wp dans Virtual Regatta) : il est gardé dans « Mes routages ». */
 function routeToWp(i) {
   const w = S.wps[i], s = S.snap;
@@ -513,7 +546,8 @@ function routeToWp(i) {
   if (!can().targetRouting) { wpMsg(`Le routage vers une cible n’est pas inclus dans l’offre « ${can().label} ».`); return; }
   if (S.routeBusy) { wpMsg('Un calcul est déjà en cours, réessaie dans quelques secondes.'); return; }
   wpMsg('');
-  requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now, target: { lat: w.lat, lon: w.lon, name: w.name } });
+  const st = routeStart();
+  requestRoute({ q: +$('#selQuality').value, lat: st.lat, lon: st.lon, t0: st.t0, target: { lat: w.lat, lon: w.lon, name: w.name } });
 }
 /** Recalcule la route active peu après une modification des cibles (évite de lancer un calcul à chaque pixel de glisser).
  *  Un routage enregistré que le bateau suit reste figé : on ne le remplace pas dans son dos. */
@@ -879,6 +913,8 @@ function bindUi() {
   $('#btnUnfreeze').onclick = unfreeze;
   $('#btnOrderFinish').onclick = () => { manual(); S.waypoint = null; S.sim.set_waypoint_finish(); };
   $('#planBadge').textContent = can().label;
+  loadRouterSettings();
+  for (const id of ['#selQuality', '#chkAuto', '#inAutoH']) $(id).addEventListener('change', saveRouterSettings);
   $('#tgRoute').onclick = (e) => { S.layers.route = !S.layers.route; e.currentTarget.classList.toggle('on', S.layers.route); };
 
   // compas : les changements sont proposés (aperçu jaune sur le compas) puis validés ou annulés
@@ -927,7 +963,8 @@ function bindUi() {
   $('#btnRoute').onclick = () => {
     const s = S.snap;
     S.frozen = null; renderRoutings();
-    requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now, save: true });
+    const st = routeStart();
+    requestRoute({ q: +$('#selQuality').value, lat: st.lat, lon: st.lon, t0: st.t0, save: true });
   };
   const alignNow = () => {
     S.align = true; S.seq = false; syncAlignUi();
@@ -1539,7 +1576,7 @@ function updateUi() {
   $('#vTwd').textContent = `de ${sn.twd.toFixed(0)}°`;
   $('#vSail').textContent = sn.sail;
   $('#vPilot').textContent = sn.pilot;
-  renderOrder();
+  renderOrder(); renderStartInfo();
   $('#vDtf').textContent = sn.dtf.toFixed(0);
   $('#vBrg').textContent = sn.bearing_to_finish.toFixed(0);
   $('#vSailed').textContent = sn.dist_sailed.toFixed(0);
