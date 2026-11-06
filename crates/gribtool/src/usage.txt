@@ -1,0 +1,6 @@
+gribtool — vent GFS pour le simulateur
+
+  gribtool fetch   [--cycle latest|YYYYMMDDHH] [--hours 168] [--step 3] [--res 0p50|0p25|1p00]
+                   [--area S,N,W,E] [--out wind.bin]
+  gribtool convert --epoch YYYYMMDDHH [--area S,N,W,E] [--out wind.bin] HEURE:fichier.grib2 ...
+  gribtool inspect fichier.grib2

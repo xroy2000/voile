@@ -1,0 +1,10 @@
+[package]
+name = "gribtool"
+version = "0.1.0"
+edition = "2021"
+description = "Télécharge le vent GFS (NOAA, AWS Open Data), le décode et l'écrit au format compact lu par le jeu"
+
+[dependencies]
+regatta-core = { path = "../core" }
+grib = { version = "0.15", default-features = false, features = ["png-unpack-with-png-crate"] }
+ureq = { version = "2", features = ["native-certs"] }

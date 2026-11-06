@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voile autonome — simulateur de course au large avec routeur intégré</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">⛵ <b>Voile autonome</b> <span id="courseName" class="muted"></span></div>
+  <div class="clock">
+    <div id="clockUtc" class="big">—</div>
+    <div id="clockLocal" class="muted small">—</div>
+  </div>
+  <div class="timectl">
+    <button id="btnPause" title="Pause / reprise (espace)">⏸</button>
+    <span id="speedBtns"></span>
+    <span id="elapsed" class="muted small"></span>
+  </div>
+  <div id="windBadge" class="badge"></div>
+</header>
+
+<main>
+  <aside id="left">
+    <section>
+      <h3>Bateau <span id="grounded" class="alert hidden">ÉCHOUÉ</span><span id="finished" class="ok hidden">ARRIVÉ</span></h3>
+      <div class="grid2">
+        <div><label>Vitesse</label><div class="val"><span id="vSpeed">—</span> <small>nds</small></div></div>
+        <div><label>Cap</label><div class="val"><span id="vHeading">—</span><small>°</small></div></div>
+        <div><label>TWA</label><div class="val"><span id="vTwa">—</span><small>°</small></div></div>
+        <div><label>Vent</label><div class="val"><span id="vTws">—</span> <small>nds</small> <small id="vTwd"></small></div></div>
+        <div><label>Voile</label><div class="val" id="vSail">—</div></div>
+        <div><label>Pilote</label><div class="val small" id="vPilot">—</div></div>
+        <div><label>Arrivée</label><div class="val"><span id="vDtf">—</span> <small>nm</small></div></div>
+        <div><label>Cap arrivée</label><div class="val"><span id="vBrg">—</span><small>°</small></div></div>
+        <div><label>Parcouru</label><div class="val"><span id="vSailed">—</span> <small>nm</small></div></div>
+        <div><label>Manœuvres</label><div class="val"><span id="vManeuvers">—</span></div></div>
+      </div>
+      <div class="pos" id="vPos">—</div>
+      <canvas id="polarCv" width="280" height="150"></canvas>
+      <div class="muted small" id="polarInfo"></div>
+    </section>
+
+    <section>
+      <h3>Pilote automatique</h3>
+      <div class="row"><label>Cap</label><input id="inHeading" type="number" step="1" min="0" max="359" value="240"><button id="btnHeading">Appliquer</button></div>
+      <div class="row"><label>TWA</label><input id="inTwa" type="number" step="1" min="-180" max="180" value="-110"><button id="btnTwa">Appliquer</button></div>
+      <div class="row wrap">
+        <button id="btnVmgUp">VMG près</button>
+        <button id="btnVmgDown">VMG portant</button>
+        <button id="btnFinish">Vers l’arrivée</button>
+        <button id="btnPoint" title="Puis clique sur la carte">Point sur la carte</button>
+      </div>
+      <div class="muted small">TWA : + vent par tribord, − par bâbord.</div>
+    </section>
+
+    <section>
+      <h3>Données</h3>
+      <div class="row wrap"><label class="file">Vent (wind.bin)<input id="fileWind" type="file" accept=".bin"></label>
+      <label class="file">Polaire (.csv / .pol)<input id="filePolar" type="file" accept=".csv,.pol,.txt,.tsv"></label></div>
+      <div class="muted small" id="dataInfo"></div>
+      <div id="dataErr" class="alert small hidden"></div>
+    </section>
+
+    <section>
+      <h3>Parcours / position de départ</h3>
+      <div class="row"><label>Départ lat</label><input id="inSLat" type="text" placeholder="39°N 02'19&quot;"></div>
+      <div class="row"><label>Départ lon</label><input id="inSLon" type="text" placeholder="41°W 40'26&quot;"></div>
+      <div class="row"><label>Arrivée lat</label><input id="inFLat" type="text"></div>
+      <div class="row"><label>Arrivée lon</label><input id="inFLon" type="text"></div>
+      <div class="row wrap"><button id="btnReset">Réinitialiser la partie</button><button id="btnPreset">Route du Rhum</button></div>
+      <div class="muted small">Décimal (39.04) ou degrés-minutes (39°02'19"N). Pour comparer avec Virtual Regatta, entre ta position et l’arrivée.</div>
+      <div id="resetErr" class="alert small hidden"></div>
+    </section>
+  </aside>
+
+  <div id="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="mapTools">
+      <button id="tgWind" class="on" title="Vent">💨</button>
+      <button id="tgIso" class="on" title="Isochrones">◌</button>
+      <button id="tgFollow" title="Centrer sur le bateau">◎</button>
+      <button id="btnFit" title="Tout voir">⤢</button>
+    </div>
+    <div id="legend"></div>
+    <div id="hover">—</div>
+    <div id="mapMsg" class="hidden"></div>
+    <div id="loading"><div><div class="spin"></div><div id="loadingTxt">Chargement…</div></div></div>
+  </div>
+
+  <aside id="right">
+    <section>
+      <h3>Routeur intégré</h3>
+      <div class="row"><label>Qualité</label>
+        <select id="selQuality">
+          <option value="0">Rapide (≈ 1 s, ~4 % de l’optimum)</option>
+          <option value="1" selected>Standard (≈ 3 s)</option>
+          <option value="2">Précis (≈ 10 s)</option>
+        </select></div>
+      <div class="row wrap">
+        <button id="btnRoute" class="primary">Calculer la route</button>
+        <button id="btnFollow">Suivre la route</button>
+        <button id="btnCsv" title="Exporter les ordres de pilote">CSV</button>
+      </div>
+      <label class="check"><input id="chkAuto" type="checkbox"> Recalcul et suivi automatiques toutes les <input id="inAutoH" type="number" min="1" max="48" value="6" class="tiny"> h de jeu</label>
+      <div id="routeStatus" class="muted small">Aucune route calculée.</div>
+      <div id="routeSummary" class="summary hidden"></div>
+      <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section>
+      <h3>Classement</h3>
+      <ol id="board"></ol>
+    </section>
+  </aside>
+</main>
+<script type="module" src="main.js"></script>
+</body>
+</html>
