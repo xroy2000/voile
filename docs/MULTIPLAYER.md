@@ -1,6 +1,6 @@
 # Offshore Racing — multijoueur : plan d'architecture
 
-Choix validés : **Vercel + Neon Postgres**, inscription par **e-mail + lien magique**, format **course commune en temps réel**
+Choix validés : **Vercel + Neon Postgres**, inscription par **lien d'invitation + mot de passe** (sans e-mail), format **course commune en temps réel**
 (même parcours, même vent, un bateau et des ordres par joueur, classement partagé, adversaires visibles sur la carte).
 
 ## Principe : serveur autoritaire, simulation « paresseuse »
@@ -16,18 +16,25 @@ Un voilier en temps réel ne change de trajectoire que lorsqu'il reçoit un ordr
 ## Données (Neon Postgres)
 | Table | Contenu |
 |---|---|
-| `users` | id, e-mail, pseudo, créé le, consentement |
+| `users` | id, pseudo, `pseudo_lc` (unique), hash du mot de passe (scrypt), créé le, dernière connexion |
+| `invites` | hash du jeton, note, joueur à réinitialiser (facultatif), expiration, utilisé le/par, annulé |
+| `login_attempts` | clé IP + pseudo, date (limitation des essais) |
 | `races` | id, nom, parcours (départ, arrivée), `start_unix`, vent (`wind_ref`), statut, classe de bateau + `perf` imposée |
 | `entries` | user_id, race_id, nom/style du bateau (JSON), `state` (JSON `export_state`), `state_t`, `orders` (JSON : pilote, route, points), arrivée |
 | `order_log` | entry_id, t, type, charge utile (audit, relecture, litiges) |
 | `standings` | race_id, t, classement calculé (cache) |
 
-## Authentification
-Lien magique par e-mail (Auth.js avec adaptateur Postgres + fournisseur d'e-mail, par ex. Resend). La première connexion crée le compte
-et demande un pseudo. Cookie de session sécurisé. Suppression de compte et export des données (RGPD) prévus.
+## Authentification (en place)
+Pas d'e-mail : l'organisateur crée un **lien d'invitation à usage unique** (page `/admin.html`, protégée par `ADMIN_SECRET`). Le joueur ouvre le lien,
+choisit son pseudo et son mot de passe (scrypt), puis reçoit un cookie de session signé (HMAC, HttpOnly, SameSite=Lax, 30 jours, `SESSION_SECRET`).
+- Les jetons d'invitation ne sont stockés que sous forme de hash ; le lien n'est affiché qu'une fois, valable 1 à 30 jours (7 par défaut), annulable.
+- **Mot de passe perdu** : l'administrateur crée un lien de réinitialisation rattaché au pseudo (bouton « Nouveau mot de passe »).
+- Connexion limitée à 8 échecs par 15 minutes (IP + pseudo) ; les requêtes qui modifient l'état exigent `Content-Type: application/json`.
+- Endpoints : `POST /api/auth/login|logout`, `GET /api/auth/me`, `GET /api/invite/check`, `POST /api/invite/redeem`, `/api/admin/invites`, `/api/admin/users`.
+- Test local : `npm install && npm run dev` (base PGlite en mémoire), tests : `npm run test:auth`.
+- Suppression de compte par l'administrateur ; export des données (RGPD) prévu.
 
 ## API (fonctions Vercel, dossier `api/`)
-- `POST /api/auth/*` : connexion par lien magique.
 - `GET /api/races` · `POST /api/races/:id/join` : choisir une course, s'inscrire avec nom et style de bateau.
 - `GET /api/races/:id/fleet` : positions de tous les bateaux à l'instant courant (avancés à la demande ou lus du cache), classement.
 - `GET /api/entries/me` : mon état officiel avancé à maintenant.
@@ -50,7 +57,7 @@ ordres envoyés au serveur, indicateur « état officiel / simulation », repris
 
 ## Phases
 1. **Projet Vercel + Neon** : dépôt relié, `api/`, variables d'environnement, schéma SQL.
-2. **Comptes** : lien magique, pseudo, session.
+2. **Comptes** : ✅ invitation par lien, pseudo, mot de passe, session.
 3. **Courses et inscriptions** : créer/lister/rejoindre, état initial au départ.
 4. **Serveur autoritaire** : moteur WASM en fonction, avance paresseuse, ordres validés et journalisés.
 5. **Flotte partagée** : positions des autres joueurs sur la carte, classement, rafraîchissement.
@@ -60,7 +67,6 @@ ordres envoyés au serveur, indicateur « état officiel / simulation », repris
 ## Ce qu'il me faut de ta part (avant la phase 1)
 - Compte **Vercel** connecté à cette session (le connecteur Vercel demande une autorisation à donner toi-même, via `/mcp` dans un terminal Claude Code).
 - Un projet **Neon** (créable depuis le Marketplace Vercel) ; je configure le schéma.
-- Un fournisseur d'e-mail pour les liens magiques (**Resend** recommandé) et le domaine d'envoi.
 - Le nom de domaine ou sous-domaine souhaité pour le jeu.
 - Une première course à créer : parcours, date de départ, classe de bateau.
 

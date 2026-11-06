@@ -1,0 +1,19 @@
+{
+  "name": "offshore-racing",
+  "private": true,
+  "type": "module",
+  "description": "Offshore Racing : simulateur de course au large (web statique + API comptes sur Vercel/Neon)",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "test:auth": "node scripts/test-auth.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

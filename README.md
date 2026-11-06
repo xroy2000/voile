@@ -47,6 +47,15 @@ voiles affichées ou non. L'icône est utilisée sur la carte et au centre du co
 Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau repart de là **à l'heure du fichier**, rattrape le temps réel en suivant la route idéale,
 et la route du fichier est tracée en pointillés bleus (« Route GPX »).
 
+## Comptes et invitations
+Pas d'e-mail ni de service externe : l'organisateur ouvre `/admin.html` (code `ADMIN_SECRET`), crée un lien d'invitation à usage unique et l'envoie au joueur,
+qui choisit pseudo et mot de passe sur `/join.html`. Mot de passe perdu : « Nouveau mot de passe » sur la fiche du joueur crée un lien de réinitialisation.
+Les comptes vivent dans Neon Postgres (`DATABASE_URL`), la session dans un cookie signé (`SESSION_SECRET`). Détails : `docs/MULTIPLAYER.md`.
+
+    npm install
+    npm run dev          # http://localhost:8767, base PGlite en mémoire, code admin local affiché au démarrage
+    npm run test:auth    # parcours complet (invitation, connexion, réinitialisation, limitation des essais)
+
 ## Construire
     rustup target add wasm32-unknown-unknown
     cargo install wasm-bindgen-cli --version 0.2.130 --locked

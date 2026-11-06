@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Invitation — Offshore Racing</title>
+<link rel="stylesheet" href="auth.css">
+</head>
+<body>
+<main class="card">
+  <div class="brand">⛵ Offshore Racing</div>
+  <h1 id="title">Invitation</h1>
+  <p id="lead">Vérification du lien…</p>
+  <form id="f" class="hidden" autocomplete="on">
+    <div id="pseudoBox">
+      <label for="pseudo">Choisis ton pseudo</label>
+      <input id="pseudo" name="username" autocomplete="username" required minlength="3" maxlength="20">
+      <div class="hint">3 à 20 caractères : lettres, chiffres, espace, - et _</div>
+    </div>
+    <label for="pw">Mot de passe</label>
+    <input id="pw" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+    <div class="hint">8 caractères minimum</div>
+    <label for="pw2">Confirme le mot de passe</label>
+    <input id="pw2" type="password" autocomplete="new-password" required minlength="8" maxlength="200">
+    <button class="primary" id="go" type="submit">Créer mon compte</button>
+  </form>
+  <div class="msg" id="msg" role="alert"></div>
+  <div class="foot hidden" id="foot"><a href="/login.html">Déjà un compte ? Se connecter</a></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get('token') || '';
+const msg = (t, cls = 'err') => { $('msg').className = 'msg ' + cls; $('msg').textContent = t; };
+let reset = false, fixedPseudo = null;
+
+// On retire le jeton de la barre d'adresse (historique, copier-coller involontaire).
+if (token) history.replaceState(null, '', location.pathname);
+
+(async () => {
+  if (!token) { $('lead').textContent = ''; msg('Lien incomplet : demande une nouvelle invitation.'); $('foot').classList.remove('hidden'); return; }
+  try {
+    const r = await fetch('/api/invite/check?token=' + encodeURIComponent(token));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Lien invalide');
+    reset = j.reset; fixedPseudo = j.pseudo;
+    if (reset) {
+      $('title').textContent = 'Nouveau mot de passe';
+      $('lead').textContent = `Compte « ${fixedPseudo} » : choisis un nouveau mot de passe.`;
+      $('pseudoBox').classList.add('hidden'); $('pseudo').required = false;
+      $('go').textContent = 'Enregistrer';
+    } else {
+      $('title').textContent = 'Bienvenue à bord';
+      $('lead').textContent = 'Tu es invité à rejoindre la course. Choisis ton pseudo et ton mot de passe.';
+    }
+    $('f').classList.remove('hidden');
+    (reset ? $('pw') : $('pseudo')).focus();
+  } catch (err) {
+    $('lead').textContent = ''; msg(err.message + ' Demande un nouveau lien à l’organisateur.');
+    $('foot').classList.remove('hidden');
+  }
+})();
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msg('', 'ok');
+  if ($('pw').value !== $('pw2').value) return msg('Les deux mots de passe ne correspondent pas.');
+  $('go').disabled = true;
+  try {
+    const r = await fetch('/api/invite/redeem', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, pseudo: reset ? undefined : $('pseudo').value, password: $('pw').value }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Impossible de finir l’inscription');
+    msg(`Bienvenue ${j.user.pseudo} ! Redirection…`, 'ok');
+    setTimeout(() => { location.href = '/'; }, 700);
+  } catch (err) {
+    msg(err.message); $('go').disabled = false;
+  }
+});
+</script>
+</body>
+</html>

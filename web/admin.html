@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Administration — Offshore Racing</title>
+<link rel="stylesheet" href="auth.css">
+</head>
+<body>
+<main class="card" id="gate">
+  <div class="brand"><a href="/">⛵ Offshore Racing</a></div>
+  <h1>Administration</h1>
+  <p>Code administrateur requis. Il reste dans cet onglet uniquement.</p>
+  <form id="gf">
+    <label for="sec">Code administrateur</label>
+    <input id="sec" type="password" autocomplete="off" required>
+    <button class="primary" type="submit">Entrer</button>
+    <div class="msg err" id="gmsg" role="alert"></div>
+  </form>
+</main>
+
+<main class="card wide hidden" id="panel">
+  <div class="brand"><a href="/">⛵ Offshore Racing</a> · administration <button id="out" style="float:right;padding:3px 9px;font-size:12px">Quitter</button></div>
+  <h1>Joueurs et invitations</h1>
+
+  <h2>Inviter un joueur</h2>
+  <form id="nf" class="row">
+    <div><label for="label">Pour qui ? (note, facultatif)</label><input id="label" maxlength="80" placeholder="ex. Marc"></div>
+    <div style="max-width:130px"><label for="ttl">Valable (jours)</label><input id="ttl" type="number" min="1" max="30" value="7"></div>
+    <button class="primary" style="width:auto;margin:0" type="submit">Créer le lien</button>
+  </form>
+  <div id="fresh" class="hidden">
+    <div class="linkbox" id="freshUrl"></div>
+    <div class="row" style="margin-top:8px"><button id="copy" type="button">Copier le lien</button><span class="hint" id="freshInfo"></span></div>
+    <div class="hint">Ce lien ne s’affichera plus : envoie-le maintenant au joueur (il ne sert qu’une fois).</div>
+  </div>
+  <div class="msg" id="msg" role="alert"></div>
+
+  <h2>Joueurs</h2>
+  <table><thead><tr><th>Pseudo</th><th>Inscrit le</th><th>Dernière connexion</th><th></th></tr></thead><tbody id="users"></tbody></table>
+
+  <h2>Invitations</h2>
+  <table><thead><tr><th>Note</th><th>Type</th><th>Statut</th><th>Expire le</th><th></th></tr></thead><tbody id="invs"></tbody></table>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (d) => d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+const store = { get: () => { try { return sessionStorage.getItem('adm') || ''; } catch { return ''; } },
+                set: (v) => { try { v ? sessionStorage.setItem('adm', v) : sessionStorage.removeItem('adm'); } catch {} } };
+let secret = store.get();
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-admin-secret': secret, ...(opts.headers || {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || 'Erreur'); e.status = r.status; throw e; }
+  return j;
+}
+const msg = (t, cls = 'err') => { $('msg').className = 'msg ' + cls; $('msg').textContent = t; };
+const cell = (tr, text) => { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; };
+const btn = (td, text, fn) => { const b = document.createElement('button'); b.textContent = text; b.onclick = fn; td.appendChild(b); };
+
+async function refresh() {
+  const [u, i] = await Promise.all([api('/api/admin/users'), api('/api/admin/invites')]);
+  const ub = $('users'); ub.replaceChildren();
+  for (const x of u.users) {
+    const tr = document.createElement('tr');
+    cell(tr, x.pseudo); cell(tr, fmt(x.createdAt)); cell(tr, fmt(x.lastLogin));
+    const act = cell(tr, '');
+    btn(act, 'Nouveau mot de passe', () => newInvite({ pseudo: x.pseudo, label: 'Réinitialisation ' + x.pseudo }));
+    act.append(' ');
+    btn(act, 'Supprimer', async () => {
+      if (!confirm(`Supprimer le compte « ${x.pseudo} » ?`)) return;
+      try { await api('/api/admin/users?id=' + x.id, { method: 'DELETE' }); await refresh(); } catch (e) { msg(e.message); }
+    });
+    ub.appendChild(tr);
+  }
+  if (!u.users.length) { const tr = document.createElement('tr'); cell(tr, 'Aucun joueur pour l’instant.'); ub.appendChild(tr); }
+
+  const ib = $('invs'); ib.replaceChildren();
+  for (const x of i.invites) {
+    const tr = document.createElement('tr');
+    cell(tr, x.label || '—');
+    cell(tr, x.resetFor ? 'mot de passe de ' + x.resetFor : 'nouveau joueur');
+    cell(tr, x.status + (x.usedBy ? ' (' + x.usedBy + ')' : ''));
+    cell(tr, fmt(x.expiresAt));
+    const act = cell(tr, '');
+    if (x.status === 'en attente') btn(act, 'Annuler', async () => { try { await api('/api/admin/invites?id=' + x.id, { method: 'DELETE' }); await refresh(); } catch (e) { msg(e.message); } });
+    ib.appendChild(tr);
+  }
+  if (!i.invites.length) { const tr = document.createElement('tr'); cell(tr, 'Aucune invitation.'); ib.appendChild(tr); }
+}
+
+async function newInvite(body) {
+  msg('', 'ok');
+  try {
+    const j = await api('/api/admin/invites', { method: 'POST', body: JSON.stringify(body) });
+    $('freshUrl').textContent = j.url;
+    $('freshInfo').textContent = 'Valable jusqu’au ' + fmt(j.expiresAt);
+    $('fresh').classList.remove('hidden');
+    await refresh();
+  } catch (e) { msg(e.message); }
+}
+
+function show(on) { $('gate').classList.toggle('hidden', on); $('panel').classList.toggle('hidden', !on); }
+
+async function enter() {
+  try { await refresh(); show(true); }
+  catch (e) { store.set(''); secret = ''; show(false); $('gmsg').textContent = e.status === 401 ? 'Code incorrect.' : e.message; }
+}
+
+$('gf').addEventListener('submit', (e) => { e.preventDefault(); secret = $('sec').value; store.set(secret); $('sec').value = ''; enter(); });
+$('nf').addEventListener('submit', (e) => {
+  e.preventDefault();
+  newInvite({ label: $('label').value, ttlDays: Number($('ttl').value) || 7 });
+  $('label').value = '';
+});
+$('copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('freshUrl').textContent); $('copy').textContent = 'Copié ✓'; setTimeout(() => ($('copy').textContent = 'Copier le lien'), 1500); }
+  catch { msg('Copie impossible : sélectionne le lien à la main.'); }
+});
+$('out').addEventListener('click', () => { store.set(''); secret = ''; $('fresh').classList.add('hidden'); show(false); });
+if (secret) enter();
+</script>
+</body>
+</html>

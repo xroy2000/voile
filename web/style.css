@@ -96,3 +96,8 @@ body:not(.sim) #speedBtns,body:not(.sim) #btnPause,body:not(.sim) #elapsed{displ
 #simBanner button{background:#1a1205;color:#f6ad55;border-color:#1a1205}
 #btnSim{white-space:nowrap}
 body.sim #btnSim{background:#7a4a12;border-color:var(--warn)}
+
+.acct{display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap}
+.acct a{color:var(--accent);text-decoration:none;border:1px solid var(--line);border-radius:12px;padding:4px 10px;background:var(--panel2)}
+.acct a:hover{border-color:var(--accent)}
+.acct button{padding:3px 8px;font-size:11.5px}
