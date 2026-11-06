@@ -70,7 +70,7 @@ function secret() {
 const sign = (data) => crypto.createHmac('sha256', secret()).update(data).digest('base64url');
 
 export function makeSession(user) {
-  const payload = Buffer.from(JSON.stringify({ uid: user.id, pseudo: user.pseudo, exp: Date.now() + SESSION_DAYS * 864e5 })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ uid: Number(user.id), pseudo: user.pseudo, exp: Date.now() + SESSION_DAYS * 864e5 })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 export function readSession(req) {
