@@ -131,18 +131,21 @@
       <label class="check"><input id="chkSave" type="checkbox" checked> Sauvegarde automatique (toutes les 5 s) et reprise au rechargement</label>
       <div id="saveInfo" class="muted small">—</div>
     </section>
-    <section>
-      <h3>Points de routage</h3>
+    <section id="wpSec">
+      <h3><span class="step">1</span> Cibles <small class="muted">(waypoints)</small> <span id="planBadge" class="plan" title="Offre : en mode admin tout est ouvert et sans limite. Plus tard, l’offre viendra du compte du joueur.">Admin · accès libre</span></h3>
       <div class="row wrap">
-        <button id="btnWpAdd" title="Puis clique sur la carte">+ Ajouter sur la carte</button>
-        <button id="btnWpGo" title="Le pilote rallie les points dans l’ordre, puis l’arrivée">Aller aux points</button>
+        <button id="btnWpAdd" title="Puis clique sur la carte (plusieurs fois de suite)">+ Sur la carte</button>
+        <button id="btnWpBoat" title="Pose une cible à la position actuelle du bateau">+ Au bateau</button>
         <button id="btnWpClear">Tout effacer</button>
       </div>
+      <div class="row"><input id="wpLat" type="text" placeholder="Lat  ex. 38°30'N" aria-label="Latitude"><input id="wpLon" type="text" placeholder="Lon  ex. 42°15'W" aria-label="Longitude"><button id="btnWpCoord" title="Ajoute une cible à ces coordonnées">Ajouter</button></div>
+      <div id="wpCoordErr" class="alert small hidden"></div>
       <ol id="wpList"></ol>
-      <div id="wpHint" class="muted small">Pose des points sur la carte (glisse-les pour les déplacer). La route idéale et le pilote les rallient dans l’ordre avant l’arrivée.</div>
+      <div id="wpHint" class="muted small">Pose des cibles sur la carte (glisse-les pour les déplacer), saisis leurs coordonnées ou ajoute-en au bateau. « Routage » calcule le trajet jusqu’à la cible ; double-clique sur un nom pour le changer.</div>
+      <div class="row"><label for="wpRadius" style="width:auto">Cible atteinte à</label><input id="wpRadius" type="number" min="0.5" max="20" step="0.5" value="2" class="tiny"><span class="muted small">nm</span></div>
     </section>
-    <section>
-      <h3>Routeur intégré · route idéale</h3>
+    <section id="rtSec">
+      <h3><span class="step">2</span> Routages</h3>
       <div class="row"><label>Qualité</label>
         <select id="selQuality">
           <option value="0">Rapide (≈ 1 s, ~4 % de l’optimum)</option>
@@ -150,15 +153,29 @@
           <option value="2">Précis (≈ 10 s)</option>
         </select></div>
       <div class="row wrap">
-        <button id="btnRoute" class="primary">Calculer la route idéale</button>
-        <button id="btnFollow">Suivre la route idéale</button>
-        <button id="btnCsv" title="Exporter les ordres de pilote">CSV</button>
+        <button id="btnRoute" class="primary" title="Bateau → toutes les cibles dans l’ordre → arrivée">Calculer le routage complet</button>
       </div>
-      <label class="check"><input id="chkAlign" type="checkbox" checked> Le bateau s’aligne sur la route idéale (suivi automatique)</label>
-      <label class="check"><input id="chkAuto" type="checkbox" checked> Recalcul automatique de la route toutes les <input id="inAutoH" type="number" min="1" max="48" value="3" class="tiny"> h de jeu</label>
+      <label class="check"><input id="chkAuto" type="checkbox" checked> Recalcul automatique de la route active toutes les <input id="inAutoH" type="number" min="1" max="48" value="3" class="tiny"> h de jeu</label>
       <div id="routeStatus" class="muted small">Aucune route calculée.</div>
+      <h4 class="sub">Mes routages <span id="rtCount" class="muted"></span></h4>
+      <ul id="rtList"></ul>
+      <div id="rtHint" class="muted small">Chaque routage que tu lances (complet, ou vers une cible) est gardé ici : coche pour l’afficher sur la carte, ▶ pour que le bateau le suive.</div>
       <div id="routeSummary" class="summary hidden"></div>
-      <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>
+      <details id="ordersBox"><summary>Ordres détaillés de la route active</summary>
+        <div class="row wrap"><button id="btnCsv" title="Exporter les ordres de pilote">CSV</button></div>
+        <div class="tablewrap"><table id="routeTable"><thead><tr><th>Heure</th><th>Position</th><th>Cap</th><th>TWA</th><th>Vent</th><th>Voile</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+    <section id="orderSec">
+      <h3><span class="step">3</span> Ordre au bateau</h3>
+      <div id="orderNow" class="orderNow">—</div>
+      <div class="row wrap">
+        <button id="btnFollow" class="primary" title="Le bateau suit la route active (celle qui est tracée en jaune)">▶ Suivre la route active</button>
+        <button id="btnWpGo" title="Ligne directe : le pilote rallie les cibles dans l’ordre, puis l’arrivée">Rallier les cibles</button>
+        <button id="btnOrderFinish" title="Cap direct vers l’arrivée">Vers l’arrivée</button>
+      </div>
+      <div id="frozenBar" class="frozen hidden"><span id="frozenTxt"></span> <button id="btnUnfreeze" title="Reprend le recalcul automatique de la route active">Reprendre le recalcul auto</button></div>
+      <label class="check"><input id="chkAlign" type="checkbox" checked> Le bateau s’aligne sur la route active (suivi automatique)</label>
     </section>
     <section>
       <h3>Mon bateau</h3>

@@ -28,8 +28,8 @@ self.onmessage = async (e) => {
         break;
       case 'route': {
         const t = performance.now();
-        const json = m.wps && m.wps.length ? chainRoute(m) : sim.route_from(m.lat, m.lon, m.t0, m.q);
-        self.postMessage({ type: 'route', id: m.id, json, ms: performance.now() - t });
+        const json = m.target ? sim.route_leg(m.lat, m.lon, m.t0, m.q, m.target.lat, m.target.lon) : m.wps && m.wps.length ? chainRoute(m) : sim.route_from(m.lat, m.lon, m.t0, m.q);
+        self.postMessage({ type: 'route', id: m.id, json, ms: performance.now() - t, target: !!m.target });
         break;
       }
     }

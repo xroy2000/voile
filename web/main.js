@@ -230,6 +230,7 @@ const S = {
   wps: [], seq: false, armWp: false, rerouteTimer: 0, reroutePending: false, prevPos: null,
   pilotT: [0, 0, 0], cmMode: 'hdg', pend: null, boat: null, simMode: false, real: null, align: true, gpxPts: null, hoverPx: null, perf: 1,
   route: null, routeBusy: false, routeId: 0, lastAutoAt: -1e18,
+  routings: [], frozen: null, rtSeq: 0, routeMeta: null,
   landPath: null, w: 0, h: 0, dpr: 1,
   wind: { key: '', at: 0, img: null, arrows: [] },
   uiAt: 0, infoAt: 0, hoverLL: null,
@@ -250,6 +251,7 @@ function buildSave() {
     windTmin: i.t_min, perf: S.perf, pilot: R ? R.pilot : S.pilotT, align: R ? R.align : S.align,
     wps: R ? R.wps : S.wps, seq: R ? R.seq : S.seq, route: route ? { ...route, isochrones: [] } : null,
     gpxPts: R ? R.gpxPts : S.gpxPts, cmMode: S.cmMode,
+    routings: S.routings, frozen: S.frozen, rtSeq: S.rtSeq,
   };
 }
 const hhmmss = (ms) => new Date(ms).toLocaleTimeString('fr-FR');
@@ -287,9 +289,11 @@ function restoreGame(sv, label) {
   S.info = JSON.parse(S.sim.info()); S.snap = JSON.parse(S.sim.snapshot());
   S.route = sv.route || null; S.wps = sv.wps || []; S.seq = !!sv.seq; S.align = sv.align !== false; S.cmMode = sv.cmMode || 'hdg';
   setGpxPts(sv.gpxPts || null);
+  S.routings = Array.isArray(sv.routings) ? sv.routings : []; S.rtSeq = sv.rtSeq || S.routings.reduce((m, x) => Math.max(m, x.id), 0); S.frozen = sv.frozen ?? null;
   applyPilot(sv.pilot || [0, S.snap.heading, 0], S.route);
+  if (S.frozen != null && !(sv.pilot && sv.pilot[0] === 5)) S.frozen = null;
   startWorker(sv.course);
-  renderRoute(); renderWpList(); syncAlignUi(); renderGpxBtn(); syncPerfUi();
+  renderRoute(); renderWpList(); renderRoutings(); syncAlignUi(); renderGpxBtn(); syncPerfUi();
   let note = `${label || 'Partie restaurée'} (sauvegardée à ${hhmmss(sv.savedAt)}, jeu au ${fmtLocal(S.snap.now)} : rattrapage du temps réel en cours).`;
   if (sv.windTmin && S.info.t_min && Math.abs(sv.windTmin - S.info.t_min) > 1) note += ' ⚠ Le vent chargé n’est pas celui de la sauvegarde.';
   $('#saveInfo').textContent = note;
@@ -402,6 +406,7 @@ function createSim(course) {
   S.snap = JSON.parse(S.sim.snapshot());
   S.route = null; S.waypoint = null; S.ready = false; S.running = false; S.simMode = false; S.real = null; S.align = true; S.gpxPts = null;
   S.lastAutoAt = -1e18;
+  S.routings = []; S.frozen = null; S.routeMeta = null; renderRoutings();
   S.wps = []; S.seq = false; S.prevPos = null; S.reroutePending = false; S.primed = false; S.pend = null; S.gpxRoute = null; renderPend(); setMode(); syncAlignUi(); renderGpxBtn();
   $('#courseName').textContent = '';
   renderWpList();
@@ -457,11 +462,31 @@ function renderPend() {
   $('#cmPendTxt').textContent = `Nouveau cap ${pad3(h)}° · TWA ${twa >= 0 ? '+' : '−'}${Math.abs(Math.round(twa))}°` + (S.pend.mode === 'twa' ? ' (TWA verrouillé)' : '');
 }
 
-// ------------------------------------------------------------------ points de routage
-const activeWps = () => S.wps.filter((w) => !w.done);
+// ------------------------------------------------------------------ offre : ce que le joueur a le droit de faire
+// Mode admin : tout est ouvert. Plus tard l'offre viendra du compte (api/auth/me) ; toutes les limites sont rassemblées ici.
+const PLANS = {
+  admin: { label: 'Admin · accès libre', maxWps: Infinity, maxRoutings: 12, targetRouting: true },
+  free: { label: 'Gratuit', maxWps: 3, maxRoutings: 2, targetRouting: false },
+};
+const PLAN = 'admin';
+const can = () => PLANS[PLAN];
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function addWp(lat, lon) {
-  S.wps.push({ lat, lon, done: false });
+// ------------------------------------------------------------------ cibles (points de routage)
+const activeWps = () => S.wps.filter((w) => !w.done);
+const wpRadius = () => clamp(+$('#wpRadius').value || 2, 0.5, 20);
+function wpMsg(t) { const e = $('#wpCoordErr'); e.textContent = t || ''; e.classList.toggle('hidden', !t); }
+function nextWpName() {
+  const used = new Set(S.wps.map((w) => w.name));
+  let n = 1; while (used.has('Wp' + n)) n++;
+  return 'Wp' + n;
+}
+function ensureWpNames() { S.wps.forEach((w) => { if (!w.name) w.name = nextWpName(); }); }
+
+function addWp(lat, lon, name) {
+  if (S.wps.length >= can().maxWps) { wpMsg(`Offre « ${can().label} » : ${can().maxWps} cibles au maximum.`); return; }
+  wpMsg('');
+  S.wps.push({ lat, lon, done: false, name: name || nextWpName() });
   renderWpList(); scheduleReroute();
 }
 function removeWp(i) {
@@ -469,11 +494,33 @@ function removeWp(i) {
   if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); else { S.sim.set_waypoint_finish(); S.seq = false; } }
   renderWpList(); scheduleReroute();
 }
-/** Recalcule la route idéale peu après une modification des points (évite de lancer un calcul à chaque pixel de glisser). */
+function moveWp(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= S.wps.length) return;
+  [S.wps[i], S.wps[j]] = [S.wps[j], S.wps[i]];
+  if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); }
+  renderWpList(); scheduleReroute();
+}
+function centerOn(p) {
+  if (!p) return;
+  S.follow = false; $('#tgFollow').classList.remove('on');
+  S.view.cx = mercX(p.lon); S.view.cy = mercY(p.lat);
+}
+/** Routage du bateau jusqu'à une seule cible (comme « Routage » à côté d'un Wp dans Virtual Regatta) : il est gardé dans « Mes routages ». */
+function routeToWp(i) {
+  const w = S.wps[i], s = S.snap;
+  if (!w || !S.ready) return;
+  if (!can().targetRouting) { wpMsg(`Le routage vers une cible n’est pas inclus dans l’offre « ${can().label} ».`); return; }
+  if (S.routeBusy) { wpMsg('Un calcul est déjà en cours, réessaie dans quelques secondes.'); return; }
+  wpMsg('');
+  requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now, target: { lat: w.lat, lon: w.lon, name: w.name } });
+}
+/** Recalcule la route active peu après une modification des cibles (évite de lancer un calcul à chaque pixel de glisser).
+ *  Un routage enregistré que le bateau suit reste figé : on ne le remplace pas dans son dos. */
 function scheduleReroute() {
   clearTimeout(S.rerouteTimer);
   S.rerouteTimer = setTimeout(() => {
-    if (!S.ready) return;
+    if (!S.ready || S.frozen != null) return;
     if (S.routeBusy) { S.reroutePending = true; return; }
     S.reroutePending = false;
     const s = S.snap;
@@ -482,11 +529,14 @@ function scheduleReroute() {
 }
 
 function renderWpList() {
-  const ol = $('#wpList');
-  const next = activeWps()[0];
-  ol.innerHTML = S.wps.map((w, i) => `<li class="${w.done ? 'done' : ''} ${w === next ? 'next' : ''}" data-i="${i}"><span class="n">${i + 1}</span><span class="p">${fmtPos(w.lat, w.lon)}</span><span class="d"></span><button data-del="${i}" title="Supprimer">✕</button></li>`).join('');
-  $('#wpHint').classList.toggle('hidden', S.wps.length > 0);
-  $('#btnWpClear').disabled = S.wps.length === 0;
+  ensureWpNames();
+  const ol = $('#wpList'), next = activeWps()[0], rt = can().targetRouting, n = S.wps.length;
+  ol.innerHTML = S.wps.map((w, i) => `<li class="${w.done ? 'done' : ''} ${w === next ? 'next' : ''}" data-i="${i}"><span class="n">${i + 1}</span><span class="nm" data-nm="${i}" title="Double-clic pour renommer">${esc(w.name)}</span><span class="d"></span>` +
+    `<span class="act"><button data-up="${i}" title="Monter" ${i === 0 ? 'disabled' : ''}>↑</button><button data-dn="${i}" title="Descendre" ${i === n - 1 ? 'disabled' : ''}>↓</button><button data-go="${i}" title="Centrer la carte sur la cible">⌖</button>` +
+    `<button class="rt" data-rt="${i}" title="Calcule le routage du bateau jusqu’à cette cible" ${rt ? '' : 'disabled'}>Routage</button><button data-del="${i}" title="Supprimer">✕</button></span>` +
+    `<span class="p">${fmtPos(w.lat, w.lon)}</span></li>`).join('');
+  $('#wpHint').classList.toggle('hidden', n > 0);
+  $('#btnWpClear').disabled = n === 0;
   updateWpDistances();
 }
 function updateWpDistances() {
@@ -498,12 +548,22 @@ function updateWpDistances() {
     if (!w.done) { la = w.lat; lo = w.lon; }
   });
 }
-/** Détecte le passage d'un point (même à vitesse accélérée : on teste le segment parcouru entre deux images). */
+/** Renommage sur place : un champ de texte remplace le nom, Entrée ou clic ailleurs valide, Échap annule. */
+function inlineRename(el, current, apply) {
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.value = current; inp.maxLength = 28; inp.className = 'rename';
+  el.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const end = (ok) => { if (done) return; done = true; if (ok && inp.value.trim()) apply(inp.value.trim().slice(0, 28)); else apply(null); };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') end(true); else if (e.key === 'Escape') end(false); };
+  inp.onblur = () => end(true);
+}
+/** Détecte le passage d'une cible (même à vitesse accélérée : on teste le segment parcouru entre deux images). */
 function trackWps(sn) {
   const prev = S.prevPos || { lat: sn.lat, lon: sn.lon };
   const cur = { lat: sn.lat, lon: sn.lon };
   const w = activeWps()[0];
-  if (w && segDistNm(prev, cur, w) < 2) {
+  if (w && segDistNm(prev, cur, w) < wpRadius()) {
     w.done = true;
     if (S.seq) { const n = activeWps()[0]; if (n) S.sim.set_waypoint(n.lat, n.lon); else { S.sim.set_waypoint_finish(); S.seq = false; } }
     renderWpList();
@@ -516,6 +576,82 @@ function hitWp(px, py) {
     if (Math.hypot(px - x, py - y) < 13) return i;
   }
   return -1;
+}
+
+// ------------------------------------------------------------------ routages enregistrés
+const RT_COLORS = ['#4dd0e1', '#f48fb1', '#aed581', '#ffb74d', '#ba68c8', '#90caf9', '#ffd54f', '#a1887f'];
+/** Version légère d'une route (sans isochrones, nombres arrondis) pour la garder dans la sauvegarde. */
+function compactRoute(r) {
+  const q = (v, d) => +Number(v).toFixed(d);
+  return {
+    points: r.points.map((p) => ({ t: p.t, lat: q(p.lat, 4), lon: q(p.lon, 4), heading: q(p.heading, 1), twa: q(p.twa, 1), tws: q(p.tws, 1), twd: q(p.twd, 0), speed: q(p.speed, 1), sail: p.sail })),
+    eta_unix: r.eta_unix, duration_s: r.duration_s, distance_nm: r.distance_nm, tacks: r.tacks, gybes: r.gybes, reached: r.reached,
+    dt_s: r.dt_s, best_dist_to_dest_nm: r.best_dist_to_dest_nm, wp_index: r.wp_index || [],
+  };
+}
+function saveRouting(r, { name, kind, target }) {
+  if (!r.points || r.points.length < 2) return;
+  const id = ++S.rtSeq;
+  S.routings.unshift({ id, name, kind, target: target || null, createdAt: S.snap.now, t0: r.points[0].t, show: true, color: RT_COLORS[id % RT_COLORS.length], route: compactRoute(r) });
+  if (S.routings.length > can().maxRoutings) S.routings.length = can().maxRoutings; // le plus ancien est écarté
+  renderRoutings();
+}
+function renderRoutings() {
+  $('#rtCount').textContent = S.routings.length ? `(${S.routings.length})` : '';
+  $('#rtHint').classList.toggle('hidden', S.routings.length > 0);
+  $('#rtList').innerHTML = S.routings.map((rt) => {
+    const r = rt.route;
+    return `<li data-id="${rt.id}" class="${rt.show ? 'on' : ''} ${S.frozen === rt.id ? 'followed' : ''}">` +
+      `<input type="checkbox" data-show="${rt.id}" ${rt.show ? 'checked' : ''} title="Afficher sur la carte" aria-label="Afficher ${esc(rt.name)} sur la carte">` +
+      `<span class="nm" data-rn="${rt.id}" title="Double-clic pour renommer"><i class="sw" style="background:${rt.color}"></i>${esc(rt.name)}</span>` +
+      `<span class="act"><button class="go" data-follow="${rt.id}" title="Le bateau suit ce routage">▶ Suivre</button><button data-rdel="${rt.id}" title="Supprimer ce routage">🗑</button></span>` +
+      `<span class="meta">Début : ${fmtLocal(rt.t0)}<br>Arrivée : ${fmtLocal(r.eta_unix)}${r.reached ? '' : ' ⚠ non atteinte'}<br>Durée : ${fmtDur(r.duration_s)} · ${r.distance_nm.toFixed(0)} nm</span></li>`;
+  }).join('');
+}
+/** Ordre donné au bateau : suivre ce routage, figé (le recalcul automatique ne le remplace pas). */
+function followRouting(id) {
+  const rt = S.routings.find((x) => x.id === id);
+  if (!rt || !S.ready) return;
+  const r = { ...rt.route, isochrones: [], ms: 0, calcAt: S.snap.now, saved: rt.name };
+  S.route = r; S.frozen = id; S.seq = false; S.align = true; syncAlignUi();
+  if (S.sim.set_route_flat(flatRoute(r))) S.sim.follow_route();
+  S.pilotT = Array.from(S.sim.pilot_target()); // sans ça, renderOrder verrait l'ancien pilote et lèverait aussitôt le gel
+  renderRoute(); renderRoutings(); renderOrder();
+}
+function unfreeze() {
+  S.frozen = null; S.lastAutoAt = -1e18;
+  renderRoutings(); renderOrder(); renderRoute();
+  if (S.ready) scheduleReroute();
+}
+
+// ------------------------------------------------------------------ ordre au bateau
+const isFinishTarget = (a, b) => Math.abs(a - S.info.finish.lat) < 1e-4 && Math.abs(b - S.info.finish.lon) < 1e-4;
+function orderText() {
+  const [k, a, b] = S.pilotT;
+  if (k === 5) {
+    const rt = S.routings.find((x) => x.id === S.frozen);
+    return rt ? `Suit le routage « ${rt.name} »` : 'Suit la route active (recalcul automatique)';
+  }
+  if (k === 4) {
+    if (S.seq && activeWps()[0]) return `Rallie ${activeWps()[0].name} en ligne directe`;
+    return isFinishTarget(a, b) ? 'Rallie l’arrivée en ligne directe' : 'Rallie le point choisi sur la carte';
+  }
+  if (k === 0) return `Cap ${pad3(a)}° (manuel)`;
+  if (k === 1) return `TWA ${a >= 0 ? '+' : '−'}${Math.abs(Math.round(a))}° (manuel)`;
+  return k === 2 ? 'VMG près (manuel)' : 'VMG portant (manuel)';
+}
+function renderOrder() {
+  const k = S.pilotT[0];
+  if (S.frozen != null && k !== 5) { S.frozen = null; renderRoutings(); renderRoute(); } // le bateau ne suit plus ce routage
+  const t = orderText();
+  if ($('#orderNow').textContent !== t) $('#orderNow').textContent = t;
+  const fin = k === 4 && isFinishTarget(S.pilotT[1], S.pilotT[2]);
+  $('#btnFollow').classList.toggle('on', k === 5);
+  $('#btnWpGo').classList.toggle('on', k === 4 && S.seq);
+  $('#btnOrderFinish').classList.toggle('on', fin && !S.seq);
+  const fz = S.frozen != null;
+  $('#frozenBar').classList.toggle('hidden', !fz);
+  if (fz) $('#frozenTxt').textContent = 'Routage figé : le recalcul automatique est suspendu.';
 }
 
 // ------------------------------------------------------------------ temps réel / simulation
@@ -547,15 +683,15 @@ function exitSim() {
 }
 
 // ------------------------------------------------------------------ routeur
-function requestRoute({ ai = false, q, lat, lon, t0, auto = false, follow = false }) {
+function requestRoute({ ai = false, q, lat, lon, t0, auto = false, follow = false, target = null, save = false }) {
   if (S.routeBusy && !ai) return;
   const id = ai ? 'ai' : ++S.routeId;
-  if (!ai) { S.routeBusy = true; S.routeAuto = auto; S.routeFollow = follow; S.routeStart = performance.now(); $('#btnRoute').disabled = true; }
+  if (!ai) { S.routeBusy = true; S.routeAuto = auto; S.routeFollow = follow; S.routeStart = performance.now(); S.routeMeta = { target, save }; $('#btnRoute').disabled = true; }
   S.currentRouteId = ai ? S.currentRouteId : id;
-  if (!ai) $('#routeStatus').textContent = 'Calcul en cours… (le jeu continue)';
+  if (!ai) $('#routeStatus').textContent = target ? `Routage vers ${target.name} en cours… (le jeu continue)` : 'Calcul en cours… (le jeu continue)';
   // la route idéale passe par les points de routage restants, dans l'ordre
-  const wps = ai ? [] : activeWps().map((w) => ({ lat: w.lat, lon: w.lon }));
-  S.worker.postMessage({ type: 'route', id, q, lat, lon, t0, wps });
+  const wps = ai || target ? [] : activeWps().map((w) => ({ lat: w.lat, lon: w.lon }));
+  S.worker.postMessage({ type: 'route', id, q, lat, lon, t0, wps, target: target ? { lat: target.lat, lon: target.lon } : null });
 }
 
 function flatRoute(r) {
@@ -581,9 +717,21 @@ function onRoute(m) {
   if (m.id !== S.currentRouteId) return; // résultat périmé (partie réinitialisée)
   S.routeBusy = false;
   $('#btnRoute').disabled = false;
+  const meta = S.routeMeta || {}; S.routeMeta = null;
+  if (meta.target && !m.target) { // ancien worker.js encore en cache : il aurait calculé jusqu'à l'arrivée
+    $('#routeStatus').textContent = 'Calcul impossible : recharge la page (mise à jour du routeur en cache).';
+    return;
+  }
+  if (meta.target) { // routage vers une cible : il est gardé dans « Mes routages », sans toucher à la route active ni au pilote
+    saveRouting(r, { name: `Routage → ${meta.target.name}`, kind: 'target', target: meta.target.name });
+    $('#routeStatus').textContent = `Routage vers ${meta.target.name} calculé en ${(m.ms / 1000).toFixed(1)} s${r.reached ? '' : ' (cible non atteinte dans la prévision)'}.`;
+    if (S.reroutePending) scheduleReroute();
+    return;
+  }
   S.route = r; S.route.ms = m.ms; S.route.calcAt = S.snap.now;
   if (S.sim.set_route_flat(flatRoute(r)) && (S.align || S.followAfter)) { S.sim.follow_route(); S.seq = false; }
   S.followAfter = false; S.routeFollow = false;
+  if (meta.save) { const nVia = r.wp_index ? r.wp_index.length : 0; saveRouting(r, { name: nVia ? `Routage complet · ${nVia} cible${nVia > 1 ? 's' : ''}` : 'Routage complet', kind: 'full' }); }
   renderRoute();
   if (S.reroutePending) scheduleReroute();
 }
@@ -596,13 +744,13 @@ function renderRoute() {
   const eta = r.eta_unix;
   const lim = S.info.t_max;
   const nVia = r.wp_index ? r.wp_index.length : 0;
-  sum.innerHTML = `<b>Route idéale${nVia ? ` via ${nVia} point${nVia > 1 ? 's' : ''}` : ''}</b><br>` +
+  sum.innerHTML = `<b>${r.saved ? `Routage « ${esc(r.saved)} »` : 'Route idéale'}${nVia ? ` via ${nVia} cible${nVia > 1 ? 's' : ''}` : ''}</b><br>` +
     `<b>${r.reached ? 'Arrivée' : '⚠ Arrivée non atteinte'}</b> ${fmtLocal(eta)} <span class="muted">(${fmtUtc(eta)})</span><br>` +
     `Durée <b>${fmtDur(r.duration_s)}</b> · ${r.distance_nm.toFixed(0)} nm<br>` +
     `${r.tacks} virement(s), ${r.gybes} empannage(s)` +
     (lim && eta > lim ? `<br><span class="alert">Une partie de la route dépasse la prévision (${fmtUtc(lim)}) : vent figé au-delà.</span>` : '') +
     (!r.reached ? `<br><span class="alert">Reste ${r.best_dist_to_dest_nm.toFixed(0)} nm de l’arrivée au plus près.</span>` : '');
-  $('#routeStatus').textContent = `Calculé en ${(r.ms / 1000).toFixed(1)} s (pas ${r.dt_s / 3600} h) depuis ${fmtLocal(r.points[0].t)}.`;
+  $('#routeStatus').textContent = r.saved ? `Routage enregistré (pas ${r.dt_s / 3600} h), figé tant que le bateau le suit.` : `Calculé en ${(r.ms / 1000).toFixed(1)} s (pas ${r.dt_s / 3600} h) depuis ${fmtLocal(r.points[0].t)}.`;
   // Tableau d'ordres : à l'heure du point k, on prend le cap/TWA du tronçon k→k+1.
   const P = r.points;
   let prevSign = 0;
@@ -686,7 +834,51 @@ function bindUi() {
     if (!n) { S.sim.set_waypoint_finish(); return; }
     S.seq = true; S.waypoint = null; S.sim.set_waypoint(n.lat, n.lon);
   };
-  $('#wpList').addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-del]'); if (b) removeWp(+b.dataset.del); });
+  $('#wpList').addEventListener('click', (e) => {
+    const t = e.target.closest('button'), d = t && t.dataset;
+    if (!t || t.disabled) return;
+    if (d.del !== undefined) removeWp(+d.del);
+    else if (d.up !== undefined) moveWp(+d.up, -1);
+    else if (d.dn !== undefined) moveWp(+d.dn, 1);
+    else if (d.go !== undefined) centerOn(S.wps[+d.go]);
+    else if (d.rt !== undefined) routeToWp(+d.rt);
+  });
+  $('#wpList').addEventListener('dblclick', (e) => {
+    const nm = e.target.closest('.nm'); if (!nm) return;
+    const w = S.wps[+nm.dataset.nm]; if (!w) return;
+    inlineRename(nm, w.name, (v) => { if (v) w.name = v; renderWpList(); });
+  });
+  $('#btnWpBoat').onclick = () => { if (S.ready) addWp(S.snap.lat, S.snap.lon); };
+  const addFromInputs = () => {
+    const la = parseCoord($('#wpLat').value, true), lo = parseCoord($('#wpLon').value, false);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) { wpMsg('Coordonnées illisibles (ex. 38°30\'N et 42°15\'W, ou 38.5 et -42.25).'); return; }
+    addWp(la, lo); $('#wpLat').value = ''; $('#wpLon').value = '';
+  };
+  $('#btnWpCoord').onclick = addFromInputs;
+  for (const id of ['#wpLat', '#wpLon']) $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') addFromInputs(); });
+  try { const r = localStorage.getItem('voile.wpRadius'); if (r) $('#wpRadius').value = r; } catch { /* stockage indisponible */ }
+  $('#wpRadius').onchange = () => { try { localStorage.setItem('voile.wpRadius', String(wpRadius())); } catch { /* ignoré */ } };
+  $('#rtList').addEventListener('click', (e) => {
+    const t = e.target.closest('button'), d = t && t.dataset;
+    if (!t) return;
+    if (d.follow !== undefined) followRouting(+d.follow);
+    else if (d.rdel !== undefined) {
+      const id = +d.rdel; S.routings = S.routings.filter((x) => x.id !== id);
+      renderRoutings();
+    }
+  });
+  $('#rtList').addEventListener('change', (e) => {
+    const c = e.target.closest('[data-show]'); if (!c) return;
+    const rt = S.routings.find((x) => x.id === +c.dataset.show); if (rt) { rt.show = c.checked; renderRoutings(); }
+  });
+  $('#rtList').addEventListener('dblclick', (e) => {
+    const nm = e.target.closest('[data-rn]'); if (!nm) return;
+    const rt = S.routings.find((x) => x.id === +nm.dataset.rn); if (!rt) return;
+    inlineRename(nm, rt.name, (v) => { if (v) rt.name = v; renderRoutings(); });
+  });
+  $('#btnUnfreeze').onclick = unfreeze;
+  $('#btnOrderFinish').onclick = () => { manual(); S.waypoint = null; S.sim.set_waypoint_finish(); };
+  $('#planBadge').textContent = can().label;
   $('#tgRoute').onclick = (e) => { S.layers.route = !S.layers.route; e.currentTarget.classList.toggle('on', S.layers.route); };
 
   // compas : les changements sont proposés (aperçu jaune sur le compas) puis validés ou annulés
@@ -734,10 +926,12 @@ function bindUi() {
 
   $('#btnRoute').onclick = () => {
     const s = S.snap;
-    requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now });
+    S.frozen = null; renderRoutings();
+    requestRoute({ q: +$('#selQuality').value, lat: s.lat, lon: s.lon, t0: s.now, save: true });
   };
   const alignNow = () => {
     S.align = true; S.seq = false; syncAlignUi();
+    if (S.frozen != null) { followRouting(S.frozen); return; }
     if (S.route && S.sim.set_route_flat(flatRoute(S.route))) S.sim.follow_route();
     else { S.followAfter = true; $('#btnRoute').click(); }
   };
@@ -1091,6 +1285,18 @@ function draw() {
     tr.forEach(([la, lo], i) => { const [x, y] = toScreen(la, lo); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
     const sn = S.snap; const [bx, by] = toScreen(sn.lat, sn.lon); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
   }
+  // routages enregistrés affichés (celui que le bateau suit est déjà tracé en jaune)
+  for (const rt of S.routings) {
+    if (!rt.show || rt.id === S.frozen) continue;
+    const P = rt.route.points;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+    P.forEach((p, i) => { const [x, y] = toScreen(p.lat, p.lon); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.lineWidth = 5; ctx.strokeStyle = rt.color + '33'; ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = rt.color; ctx.stroke();
+    const e = P[P.length - 1], [ex, ey] = toScreen(e.lat, e.lon);
+    ctx.fillStyle = rt.color; ctx.beginPath(); ctx.arc(ex, ey, 4, 0, 6.3); ctx.fill();
+    ctx.font = '10.5px system-ui'; ctx.textAlign = 'left'; ctx.fillText(`${rt.name} · ${fmtLocal(rt.route.eta_unix)}`, ex + 8, ey - 6);
+  }
   // route idéale (routeur) : trait lumineux jaune, repères de jour, étiquette d'arrivée
   if (R && S.layers.route) {
     const P = R.points;
@@ -1151,7 +1357,11 @@ function draw() {
       ctx.fillStyle = w.done ? 'rgba(74,85,104,.9)' : '#7c5cff'; ctx.fill();
       ctx.lineWidth = next ? 3 : 2; ctx.strokeStyle = next ? '#fff' : 'rgba(255,255,255,.7)'; ctx.stroke();
       ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(i + 1), x, y + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(String(i + 1), x, y + 0.5);
+      ctx.font = 'bold 10.5px system-ui'; const tw = ctx.measureText(w.name).width + 10;
+      ctx.fillStyle = w.done ? 'rgba(74,85,104,.9)' : 'rgba(229,62,62,.92)'; ctx.fillRect(x - tw / 2, y - 29, tw, 15);
+      ctx.fillStyle = '#fff'; ctx.fillText(w.name, x, y - 21);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     });
   }
 
@@ -1329,6 +1539,7 @@ function updateUi() {
   $('#vTwd').textContent = `de ${sn.twd.toFixed(0)}°`;
   $('#vSail').textContent = sn.sail;
   $('#vPilot').textContent = sn.pilot;
+  renderOrder();
   $('#vDtf').textContent = sn.dtf.toFixed(0);
   $('#vBrg').textContent = sn.bearing_to_finish.toFixed(0);
   $('#vSailed').textContent = sn.dist_sailed.toFixed(0);
@@ -1343,7 +1554,7 @@ function updateUi() {
   if (done && S.running && sn.finished_at != null && !S.finishNotified) { S.finishNotified = true; $('#routeStatus').textContent = `Arrivée en ${fmtDur(sn.finished_at - S.info.start_unix)}.`; }
 
   // recalcul automatique
-  if ($('#chkAuto').checked && S.ready && !S.routeBusy && !done) {
+  if ($('#chkAuto').checked && S.ready && !S.routeBusy && !done && S.frozen == null) {
     const every = Math.max(1, +$('#inAutoH').value || 6) * 3600;
     if (sn.now - S.lastAutoAt >= every) { S.lastAutoAt = sn.now; requestRoute({ q: +$('#selQuality').value, lat: sn.lat, lon: sn.lon, t0: sn.now, auto: true }); }
   }

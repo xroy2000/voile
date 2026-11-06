@@ -101,3 +101,34 @@ body.sim #btnSim{background:#7a4a12;border-color:var(--warn)}
 .acct a{color:var(--accent);text-decoration:none;border:1px solid var(--line);border-radius:12px;padding:4px 10px;background:var(--panel2)}
 .acct a:hover{border-color:var(--accent)}
 .acct button{padding:3px 8px;font-size:11.5px}
+
+/* parcours routage : cibles, routages enregistrés, ordre au bateau */
+.step{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--accent);color:#031024;font-size:11px;font-weight:700;margin-right:2px}
+.plan{margin-left:auto;font-size:10.5px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--ok);border:1px solid #2f855a;border-radius:10px;padding:1px 8px}
+h4.sub{margin:12px 0 4px;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+ol#wpList li{flex-wrap:wrap;row-gap:3px}
+ol#wpList .nm{flex:1;min-width:60px;font-weight:600;cursor:text;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ol#wpList .p{flex-basis:100%;order:5;padding-left:28px;color:var(--muted)}
+ol#wpList .act{display:flex;gap:3px}
+ol#wpList .act button{padding:0 6px;line-height:20px;font-size:11.5px}
+ol#wpList .act button.rt{background:#1b4fb8;border-color:var(--accent)}
+ol#wpList .act button:disabled{opacity:.35;cursor:default}
+ul#rtList{margin:4px 0;padding:0;list-style:none}
+ul#rtList li{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:start;padding:6px 7px;border-radius:6px;border:1px solid var(--line);margin-bottom:5px;background:rgba(255,255,255,.02)}
+ul#rtList li.on{border-color:var(--accent);background:rgba(77,141,255,.08)}
+ul#rtList .sw{width:12px;height:12px;border-radius:3px;margin-top:3px}
+ul#rtList .nm{font-weight:600;cursor:text} ul#rtList .meta{grid-column:2;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+ul#rtList .act{grid-column:3;grid-row:1 / span 2;display:flex;flex-direction:column;gap:4px}
+ul#rtList .act button{padding:2px 7px;font-size:12px} ul#rtList .act button.go{background:#1b4fb8;border-color:var(--accent)}
+ul#rtList li.followed .nm::after{content:" · suivi";color:var(--ok);font-weight:500;font-size:11px}
+ul#rtList input[type=checkbox]{margin:2px 0 0}
+.orderNow{padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);font-weight:600;margin-bottom:6px}
+.frozen{margin:6px 0;padding:6px 8px;border:1px solid #f6ad55;border-radius:6px;color:#f6ad55;font-size:12px}
+.frozen button{margin-left:6px;padding:2px 7px;font-size:11.5px}
+details#ordersBox{margin-top:8px} details#ordersBox summary{cursor:pointer;color:var(--muted);font-size:12px;margin-bottom:4px}
+ul#rtList .sw{display:inline-block;margin:0 6px 0 0;vertical-align:-1px}
+input.rename{flex:1;min-width:60px;padding:1px 5px}
+ol#wpList li{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:center;padding:6px 7px}
+ol#wpList .p{grid-column:2 / 4;grid-row:2;padding:0;flex-basis:auto}
+ol#wpList .act{grid-column:1 / 4;grid-row:3;display:flex;gap:4px;margin-top:2px}
+ol#wpList .act button.rt{flex:1}

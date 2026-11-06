@@ -47,6 +47,14 @@ voiles affichées ou non. L'icône est utilisée sur la carte et au centre du co
 Le bouton ≋ de la carte active des milliers de particules qui glissent dans le champ de vent, avec une traîne : vitesse proportionnelle à la force du vent, trait plus épais quand il forcit,
 et suivi du déplacement et du zoom de la carte. Désactivé, la carte revient aux flèches fixes. Le choix est mémorisé (et l'animation est coupée par défaut si le système demande moins de mouvement).
 
+## Cibles, routages et ordre au bateau
+Le panneau de droite suit le parcours de Virtual Regatta en trois étapes :
+1. **Cibles** (waypoints Wp1, Wp2…) : posées sur la carte, à la position du bateau ou par coordonnées ; renommables (double-clic), réordonnables, déplaçables à la souris. Le bouton **Routage** d'une cible calcule le trajet du bateau jusqu'à cette seule cible.
+2. **Routages** : « Calculer le routage complet » (bateau → toutes les cibles → arrivée) et chaque routage vers une cible sont gardés dans **Mes routages** (début, arrivée, durée, distance) : case pour l'afficher sur la carte dans sa couleur, renommage, suppression. Ils sont sauvegardés avec la partie.
+3. **Ordre au bateau** : ▶ Suivre un routage (il est alors figé, le recalcul automatique est suspendu), suivre la route active, rallier les cibles en ligne directe, ou aller à l'arrivée. L'ordre en cours est toujours affiché.
+
+Les limites par offre sont rassemblées dans `PLANS` (`web/main.js`) : en mode **admin** tout est ouvert ; une offre payante pourra limiter les cibles, les routages gardés ou le routage par cible.
+
 ## Importer ma position (GPX)
 Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau repart de là **à l'heure du fichier**, rattrape le temps réel en suivant la route idéale,
 et la route du fichier est tracée en pointillés bleus (« Route GPX »).
