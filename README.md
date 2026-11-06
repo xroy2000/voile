@@ -43,6 +43,10 @@ adversaires, pilote (cap / TWA / VMG / point / route), route idéale, points de 
 Section « Mon bateau » : monocoque IMOCA à foils, trimaran, catamaran ou voilier classique ; couleurs de coque, d'accent et de voile ; taille ;
 voiles affichées ou non. L'icône est utilisée sur la carte et au centre du compas, et sa grand-voile suit le TWA. Réglages mémorisés.
 
+## Vent animé
+Le bouton ≋ de la carte active des milliers de particules qui glissent dans le champ de vent, avec une traîne : vitesse proportionnelle à la force du vent, trait plus épais quand il forcit,
+et suivi du déplacement et du zoom de la carte. Désactivé, la carte revient aux flèches fixes. Le choix est mémorisé (et l'animation est coupée par défaut si le système demande moins de mouvement).
+
 ## Importer ma position (GPX)
 Bouton « Importer GPX (position) » : piste = dernier point, route ou waypoint = premier point. Le bateau repart de là **à l'heure du fichier**, rattrape le temps réel en suivant la route idéale,
 et la route du fichier est tracée en pointillés bleus (« Route GPX »).

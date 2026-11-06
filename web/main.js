@@ -723,6 +723,11 @@ function bindUi() {
     else if (e.code === 'ArrowRight') { e.preventDefault(); cmSteer(e.shiftKey ? 5 : 1); }
   });
   $('#tgWind').onclick = (e) => { S.layers.wind = !S.layers.wind; e.currentTarget.classList.toggle('on', S.layers.wind); S.wind.key = ''; };
+  $('#tgFlow').classList.toggle('on', FLOW.on);
+  $('#tgFlow').onclick = (e) => {
+    FLOW.on = !FLOW.on; e.currentTarget.classList.toggle('on', FLOW.on);
+    try { localStorage.setItem('voile.flow', FLOW.on ? '1' : '0'); } catch { /* stockage indisponible */ }
+  };
   $('#tgIso').onclick = (e) => { S.layers.iso = !S.layers.iso; e.currentTarget.classList.toggle('on', S.layers.iso); };
   $('#tgFollow').onclick = (e) => { S.follow = !S.follow; e.currentTarget.classList.toggle('on', S.follow); };
   $('#btnFit').onclick = () => { S.follow = false; $('#tgFollow').classList.remove('on'); fitView(); };
@@ -905,6 +910,7 @@ function refreshWind(force) {
   S.wind.key = key; S.wind.at = nowMs;
   const CELL = 14;
   const gw = Math.ceil(S.w / CELL), gh = Math.ceil(S.h / CELL);
+  if (gw < 1 || gh < 1) return; // carte pas encore dimensionnée
   const coords = new Float64Array(gw * gh * 2);
   for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
     const ll = screenToLL((i + 0.5) * CELL, (j + 0.5) * CELL);
@@ -921,6 +927,7 @@ function refreshWind(force) {
   }
   ictx.putImageData(id, 0, 0);
   S.wind.arrows = arrows;
+  S.wind.grid = { gw, gh, CELL, cx: S.view.cx, cy: S.view.cy, z: S.view.z, w: S.w, h: S.h, uv };
 }
 
 function drawArrow(x, y, dx, dy, sp) {
@@ -930,6 +937,100 @@ function drawArrow(x, y, dx, dy, sp) {
   ctx.moveTo(tx, ty); ctx.lineTo(tx - dx * 4 - dy * 2.6, ty - dy * 4 + dx * 2.6);
   ctx.stroke();
 }
+
+// ------------------------------------------------------------------ vent animé (particules, comme sur Windy / Virtual Regatta)
+// Des milliers de particules glissent dans le champ de vent ; chacune laisse une traîne qui s'efface.
+// Positions en coordonnées « monde » (elles suivent donc le déplacement et le zoom de la carte), vitesse affichée proportionnelle au vent.
+const FLOW = { on: true, n: 0, L: 30, step: 1 / 60, acc: 0, at: 0, head: 0, z: 0, PXKN: 3.4, x: null, y: null, age: null, life: null, spd: null, hist: null };
+try { const f = localStorage.getItem('voile.flow'); FLOW.on = f === null ? !matchMedia('(prefers-reduced-motion: reduce)').matches : f === '1'; } catch { /* stockage indisponible */ }
+
+/** Vent (u, v en nds) au point monde (wx, wy), interpolé sur la grille de refreshWind ; null hors grille. */
+function gridWind(wx, wy) {
+  const g = S.wind.grid;
+  if (!g || g.gw < 2 || g.gh < 2) return null;
+  const fx = ((wx - g.cx) * g.z + g.w / 2) / g.CELL - 0.5, fy = ((wy - g.cy) * g.z + g.h / 2) / g.CELL - 0.5;
+  if (fx < 0 || fy < 0 || fx > g.gw - 1 || fy > g.gh - 1) return null;
+  const i = Math.min(g.gw - 2, Math.floor(fx)), j = Math.min(g.gh - 2, Math.floor(fy));
+  const tx = fx - i, ty = fy - j, k = (j * g.gw + i) * 2, r = g.gw * 2, uv = g.uv;
+  const m = (o) => (uv[k + o] * (1 - tx) + uv[k + 2 + o] * tx) * (1 - ty) + (uv[k + r + o] * (1 - tx) + uv[k + r + 2 + o] * tx) * ty;
+  return [m(0), m(1)];
+}
+
+function flowSpawn(p, stagger) {
+  const { w, h } = S, z = S.view.z;
+  const x = S.view.cx + (Math.random() - 0.5) * w / z, y = S.view.cy + (Math.random() - 0.5) * h / z;
+  FLOW.x[p] = x; FLOW.y[p] = y;
+  FLOW.life[p] = FLOW.L + 40 + Math.random() * 90;
+  FLOW.age[p] = stagger ? Math.random() * FLOW.life[p] : 0;
+  FLOW.spd[p] = 0;
+  const base = p * FLOW.L * 2;
+  for (let a = 0; a < FLOW.L; a++) { FLOW.hist[base + a * 2] = x; FLOW.hist[base + a * 2 + 1] = y; } // traîne repliée sur le point d'apparition
+}
+
+function flowResize() {
+  const n = clamp(Math.round(S.w * S.h / 400), 1500, 5500);
+  if (n === FLOW.n && FLOW.x) return;
+  FLOW.n = n; FLOW.x = new Float64Array(n); FLOW.y = new Float64Array(n);
+  FLOW.age = new Float32Array(n); FLOW.life = new Float32Array(n); FLOW.spd = new Float32Array(n);
+  FLOW.hist = new Float64Array(n * FLOW.L * 2);
+  for (let p = 0; p < n; p++) flowSpawn(p, true);
+}
+
+function flowStep() {
+  const { L } = FLOW, z = S.view.z;
+  FLOW.head = (FLOW.head + 1) % L;
+  for (let p = 0; p < FLOW.n; p++) {
+    let x = FLOW.x[p], y = FLOW.y[p];
+    FLOW.age[p]++;
+    const dying = FLOW.age[p] > FLOW.life[p] - L; // en fin de vie la particule s'arrête : sa traîne rattrape la tête et disparaît en douceur
+    if (FLOW.age[p] >= FLOW.life[p]) { flowSpawn(p, false); continue; }
+    if (!dying) {
+      const wv = gridWind(x, y);
+      if (!wv) { flowSpawn(p, false); continue; }
+      const sp = Math.hypot(wv[0], wv[1]);
+      FLOW.spd[p] = sp;
+      const k = sp * FLOW.PXKN * FLOW.step / z; // pixels par pas → unités monde
+      x += wv[0] * (sp > 0 ? k / sp : 0); y -= wv[1] * (sp > 0 ? k / sp : 0);
+      FLOW.x[p] = x; FLOW.y[p] = y;
+    }
+    const i = (p * L + FLOW.head) * 2;
+    FLOW.hist[i] = x; FLOW.hist[i + 1] = y;
+  }
+}
+
+function drawFlow() {
+  if (!S.wind.grid) return;
+  flowResize();
+  const now = performance.now(), dt = Math.min(0.1, (now - (FLOW.at || now)) / 1000); FLOW.at = now;
+  if (Math.abs(Math.log(S.view.z / (FLOW.z || S.view.z))) > 0.25) { for (let p = 0; p < FLOW.n; p++) flowSpawn(p, true); FLOW.z = S.view.z; }
+  if (!FLOW.z) FLOW.z = S.view.z;
+  FLOW.acc += dt;
+  for (let k = 0; k < 3 && FLOW.acc >= FLOW.step; k++) { flowStep(); FLOW.acc -= FLOW.step; }
+  FLOW.acc = Math.min(FLOW.acc, FLOW.step);
+
+  const { L, hist } = FLOW, z = S.view.z, ox = S.w / 2 - S.view.cx * z, oy = S.h / 2 - S.view.cy * z;
+  const WIDTH = [0.9, 1.3, 1.8], ALPHA = [0.1, 0.28, 0.75], CH = Math.ceil(L / 3);
+  const paths = Array.from({ length: 9 }, () => new Path2D());
+  for (let p = 0; p < FLOW.n; p++) {
+    const b = FLOW.spd[p] < 10 ? 0 : FLOW.spd[p] < 20 ? 1 : 2;
+    for (let c = 0; c < 3; c++) {
+      const path = paths[b * 3 + c];
+      const from = L - 1 - c * (CH - 1), to = Math.max(0, from - CH + 1); // âges, du plus ancien au plus récent
+      for (let a = from; a >= to; a--) {
+        const i = (p * L + ((FLOW.head - a + L * 2) % L)) * 2;
+        const sx = hist[i] * z + ox, sy = hist[i + 1] * z + oy;
+        a === from ? path.moveTo(sx, sy) : path.lineTo(sx, sy);
+      }
+    }
+  }
+  ctx.save();
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  for (let b = 0; b < 3; b++) for (let c = 0; c < 3; c++) {
+    ctx.lineWidth = WIDTH[b]; ctx.strokeStyle = `rgba(255,255,255,${ALPHA[c]})`; ctx.stroke(paths[b * 3 + c]);
+  }
+  ctx.restore();
+}
+
 
 function boatShape(x, y, hdg, color, size, outline) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(hdg * D2R);
@@ -946,7 +1047,7 @@ function draw() {
 
   if (S.layers.wind) {
     refreshWind(false);
-    if (S.wind.img) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(S.wind.img, 0, 0, S.wind.img.width * 14, S.wind.img.height * 14); }
+    if (S.wind.img && S.wind.img.width > 0 && S.wind.img.height > 0) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(S.wind.img, 0, 0, S.wind.img.width * 14, S.wind.img.height * 14); }
   }
 
   // terre
@@ -965,8 +1066,8 @@ function draw() {
 
   // flèches de vent
   if (S.layers.wind) {
-    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.1;
-    for (const a of S.wind.arrows) drawArrow(...a);
+    if (FLOW.on) drawFlow();
+    else { ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.1; for (const a of S.wind.arrows) drawArrow(...a); }
   }
 
   // isochrones
